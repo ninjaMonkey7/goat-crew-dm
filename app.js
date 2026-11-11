@@ -68,7 +68,7 @@ function md(src) {
 }
 
 // ---------- state ----------
-const S = { me: null, tab: 'party', view: null, cache: {}, search: {} };
+const S = { me: null, tab: 'party', view: null, cache: {}, search: {}, pin: localStorage.getItem('gc_pin') || '' };
 
 async function load(entity) {
   S.cache[entity] = await api('/api/' + entity);
@@ -137,37 +137,64 @@ $$('#tabs .tab').forEach(b => b.onclick = () => {
   localStorage.setItem('gc_tab', S.tab);
   render();
 });
+$('#pin-pick').onchange = e => setPin(e.target.value);
 
 // ---------- render dispatch ----------
 /* Renders run one at a time and only the latest request is honoured, so switching tabs while a
    slow render (e.g. the map image) is still in flight can never let the stale render clobber the new tab. */
 let renderChain = Promise.resolve(), renderSeq = 0;
+/* Re-render the panel that holds container c: the right rail if c is inside it, else the main tab. */
+const refresh = c => (c && c.closest && c.closest('#rail')) ? renderRail() : render();
 function render() {
   const seq = ++renderSeq;
   renderChain = renderChain.then(async () => { if (seq === renderSeq) await renderOnce(); }).catch(e => console.error('render', e));
   return renderChain;
 }
+async function renderInto(c, tab) {
+  c.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    if (tab === 'party') await renderParty(c);
+    else if (tab === 'battle') await renderBattle(c);
+    else if (tab === 'dice') await renderDice(c);
+    else if (tab === 'journal') await renderJournal(c);
+    else if (tab === 'codex') await renderCodex(c);
+    else if (tab === 'quests') await renderQuests(c);
+    else if (tab === 'board') await renderBoard(c);
+    else if (tab === 'notes') await renderNotes(c);
+    else if (tab === 'arc') await renderArc(c);
+    else if (tab === 'dm') await renderDM(c);
+    else if (tab === 'map') await renderMap(c);
+    else if (tab === 'chat') await renderChat(c);
+    else if (tab === 'settings') await renderSettings(c);
+  } catch (e) { c.innerHTML = `<p class="err">Failed to load: ${esc(e.message)}</p>`; }
+}
 async function renderOnce() {
   $$('#tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === S.tab));
   document.body.classList.toggle('tab-map', S.tab === 'map');
-  const c = $('#content');
-  c.innerHTML = '<p class="muted">Loading…</p>';
-  try {
-    if (S.tab === 'party') await renderParty(c);
-    else if (S.tab === 'battle') await renderBattle(c);
-    else if (S.tab === 'dice') await renderDice(c);
-    else if (S.tab === 'journal') await renderJournal(c);
-    else if (S.tab === 'codex') await renderCodex(c);
-    else if (S.tab === 'quests') await renderQuests(c);
-    else if (S.tab === 'board') await renderBoard(c);
-    else if (S.tab === 'notes') await renderNotes(c);
-    else if (S.tab === 'arc') await renderArc(c);
-    else if (S.tab === 'dm') await renderDM(c);
-    else if (S.tab === 'map') await renderMap(c);
-    else if (S.tab === 'chat') await renderChat(c);
-    else if (S.tab === 'settings') await renderSettings(c);
-  } catch (e) { c.innerHTML = `<p class="err">Failed to load: ${esc(e.message)}</p>`; }
+  await syncRail(); // if the main tab is the pinned one, empty the rail first so element ids stay unique
+  await renderInto($('#content'), S.tab);
+  await syncRail();
 }
+
+/* ---------- right rail: one pinned panel that stays open beside whatever tab is active ----------
+   Only panels whose element ids don't clash with the other tabs are offered. */
+const RAIL_TABS = { chat: '💬 DM Chat', notes: '📝 My Notes', battle: '⚔️ Battle', dice: '🎲 Dice', party: '👥 Party', map: '🗺 Map' };
+async function syncRail(force) {
+  const rail = $('#rail');
+  const show = !!(S.pin && RAIL_TABS[S.pin] && S.pin !== S.tab);
+  document.body.classList.toggle('has-rail', show);
+  rail.classList.toggle('hidden', !show);
+  const pick = $('#pin-pick');
+  if (pick && pick.value !== (S.pin || '')) pick.value = S.pin || '';
+  if (!show) { if (rail.dataset.tab) { rail.innerHTML = ''; delete rail.dataset.tab; } return; }
+  if (rail.dataset.tab === S.pin && !force) return; // keep the rail's state (chat draft, scroll) across main-tab switches
+  rail.dataset.tab = S.pin;
+  rail.innerHTML = `<div class="rail-head"><b>${RAIL_TABS[S.pin]}</b><button class="btn small ghost" id="rail-unpin" title="Unpin this panel">✕ unpin</button></div><div class="rail-body"></div>`;
+  $('#rail-unpin').onclick = () => setPin('');
+  await renderInto(rail.querySelector('.rail-body'), S.pin);
+}
+function setPin(tab) { S.pin = RAIL_TABS[tab] ? tab : ''; localStorage.setItem('gc_pin', S.pin); syncRail(true); }
+function renderRail() { return syncRail(true); }
 
 // ---------- PARTY ----------
 async function renderParty(c) {
@@ -185,7 +212,7 @@ async function renderParty(c) {
         ${hp !== null ? `<div class="hp-bar"><div class="${hp < 30 ? 'low' : ''}" style="width:${hp}%"></div></div>` : ''}
       </div></div>`;
   }).join('') + `</div>`;
-  $$('.char-card').forEach(el => el.onclick = () => { S.view = 'char:' + el.dataset.id; render(); });
+  $$('.char-card').forEach(el => el.onclick = () => { S.view = 'char:' + el.dataset.id; refresh(c); });
 }
 
 function statBox(ch, field, label, ed) {
@@ -222,7 +249,7 @@ async function renderCharDetail(c, ch) {
     ${hist.length ? `<details class="collapse"><summary>Edit history (${hist.length})</summary><div class="card">` +
       hist.map(h => `<div class="hist">${new Date(h.ts).toLocaleString()} — <b>${esc(h.user)}</b> changed <b>${esc(h.field)}</b>: ${esc(JSON.stringify(h.old))} → ${esc(JSON.stringify(h.new))}</div>`).join('') + '</div></details>' : ''}
   `;
-  $('#back').onclick = () => { S.view = null; render(); };
+  $('#back').onclick = () => { S.view = null; refresh(c); };
   const patch = async body => {
     const updated = await api(`/api/characters/${ch.id}`, { method: 'PATCH', body });
     Object.assign(ch, updated);
@@ -243,8 +270,8 @@ async function renderCharDetail(c, ch) {
       const view = $('#content-view');
       view.innerHTML = `<textarea id="content-ta" style="min-height:320px">${esc(ch.content)}</textarea>
         <div class="row"><button class="btn primary" id="save-content">Save</button><button class="btn" id="cancel-content">Cancel</button></div>`;
-      $('#save-content').onclick = async () => { await patch({ content: $('#content-ta').value }); render(); };
-      $('#cancel-content').onclick = () => render();
+      $('#save-content').onclick = async () => { await patch({ content: $('#content-ta').value }); refresh(c); };
+      $('#cancel-content').onclick = () => refresh(c);
     };
   }
   if (S.me.role === 'dm') $('#save-dmnotes').onclick = async () => { await patch({ dmNotes: $('#dmNotes').value }); toast('DM notes saved'); };
@@ -478,11 +505,11 @@ async function renderBattle(c) {
   $$('[data-hp]').forEach(b => b.onclick = async () => {
     const x = combatants[Number(b.dataset.i)];
     x.hp = Math.max(0, Number(x.hp || 0) + Number(b.dataset.hp));
-    await saveEnc(); render();
+    await saveEnc(); refresh(c);
   });
   $$('[data-stat]').forEach(b => b.onclick = () => $(`[data-statblock="${b.dataset.stat}"]`).classList.toggle('hidden'));
-  $('#b-next').onclick = async () => { const len = combatants.length; enc.turn = ((enc.turn || 0) + 1) % len; if (enc.turn === 0) enc.round = (enc.round || 1) + 1; await saveEnc(); render(); };
-  $('#b-prev').onclick = async () => { const len = combatants.length; enc.turn = ((enc.turn || 0) - 1 + len) % len; await saveEnc(); render(); };
+  $('#b-next').onclick = async () => { const len = combatants.length; enc.turn = ((enc.turn || 0) + 1) % len; if (enc.turn === 0) enc.round = (enc.round || 1) + 1; await saveEnc(); refresh(c); };
+  $('#b-prev').onclick = async () => { const len = combatants.length; enc.turn = ((enc.turn || 0) - 1 + len) % len; await saveEnc(); refresh(c); };
 }
 
 // ---------- DICE ----------
@@ -539,7 +566,7 @@ async function renderDice(c) {
       await api('/api/rolls', { method: 'POST', body: { formula: f, label: lInput.value.trim(), mode: mSel.value || undefined } });
     } catch (_) { return; }
     if (!formula) fInput.value = '';
-    render();
+    refresh(c);
   };
   $$('.die-btn').forEach(b => b.onclick = () => go(b.dataset.die));
   $('#roll-go').onclick = () => go();
@@ -885,7 +912,7 @@ async function onEntityEvent(entity) {
     const key = `${enc.round}:${enc.turn}`;
     if (active && myId && active.characterId === myId && key !== lastTurnKey) toast("⚔️ You're up! It's your turn.", 4000);
     lastTurnKey = key;
-  } else if (entity === 'chat' && S.tab !== 'chat') {
+  } else if (entity === 'chat' && S.tab !== 'chat' && S.pin !== 'chat') {
     const msgs = (typeof RAW !== 'undefined' && RAW.chat) || [];
     const newest = msgs[msgs.length - 1];
     if (newest && newest.user !== S.me.name && newest.kind !== 'sys') toast(`💬 ${shortName(newest.user)}: ${String(newest.text).replace(/[#*_>\n]+/g, ' ').slice(0, 90)}`, 5000);
@@ -893,7 +920,7 @@ async function onEntityEvent(entity) {
     let rolls;
     try { rolls = await load('rolls'); } catch (_) { return; }
     const newest = rolls[rolls.length - 1];
-    if (newest && newest.user !== S.me.name && S.tab !== 'dice') {
+    if (newest && newest.user !== S.me.name && S.tab !== 'dice' && S.pin !== 'dice') {
       toast(`🎲 ${shortName(newest.user)} rolled ${newest.total}${newest.label ? ` — ${newest.label}` : ''}`);
     }
   }

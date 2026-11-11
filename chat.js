@@ -156,7 +156,8 @@ function drawChat(msgs, toBottom) {
   if (streaming && streaming.el) log.appendChild(streaming.el);
   if (toBottom || atBottom) log.scrollTop = log.scrollHeight;
 }
-LIVE_HOOKS.chat = (prev, next) => { if (S.tab === 'chat') drawChat(next, false); };
+LIVE_HOOKS.chat = (prev, next) => { if (S.tab === 'chat' || S.pin === 'chat') drawChat(next, false); };
+async function refreshChat() { if (S.tab === 'chat') await render(); else if (S.pin === 'chat') await renderRail(); }
 
 async function quickAsk(kind) {
   const plans = await load('plans'); const maps = await load('maps');
@@ -176,6 +177,7 @@ async function quickAsk(kind) {
 async function askAssistant(prompt, label) {
   if (streaming) { toast('The assistant is still answering — hit Stop first'); return; }
   if (!AI.key) { toast('Add your Anthropic API key in ⚙ Settings first', 4000); S.tab = 'settings'; localStorage.setItem('gc_tab', 'settings'); render(); return; }
+  if (S.tab === 'chat' && S.pin === 'chat') return;
   const me = S.me.name;
   await api('/api/chat', { method: 'POST', body: { text: label || prompt, kind: 'ask' } });
   const el = document.createElement('div');
@@ -183,7 +185,7 @@ async function askAssistant(prompt, label) {
   el.innerHTML = `<div class="msg-meta"><b style="color:var(--dm)">🤖 Assistant</b><span>thinking…</span></div><div class="msg-text"></div>`;
   const controller = new AbortController();
   streaming = { controller, el };
-  if (S.tab === 'chat') { drawChat(await load('chat'), true); render(); }
+  await refreshChat();
   try {
     const [snapshot, chat] = await Promise.all([campaignSnapshot(), load('chat')]);
     const recent = chat.filter(m => m.kind !== 'sys').slice(-14, -1).map(m => `- ${m.kind === 'ai' ? 'Assistant' : shortName(m.user)}: ${trim(m.text, 600)}`).join('\n');
@@ -203,7 +205,7 @@ async function askAssistant(prompt, label) {
     try { await api('/api/chat', { method: 'POST', body: { text: (partial ? partial + '\n\n' : '') + `*(assistant ${why})*`, kind: 'ai', user: 'Assistant', askedBy: me } }); } catch (_) { /* ignore */ }
     if (e.name !== 'AbortError') toast('Assistant: ' + why, 5000);
   }
-  if (S.tab === 'chat') render();
+  await refreshChat();
 }
 
 // ---------- settings ----------

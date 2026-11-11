@@ -28,7 +28,7 @@ async function renderMap(c) {
       <div id="map-side" class="map-side hidden"></div>
       <div id="map-hint" class="map-hint hidden"></div>
     </div>`;
-  $('#map-pick').onchange = e => { S.search.map = e.target.value; localStorage.setItem('gc_map', e.target.value); render(); };
+  $('#map-pick').onchange = e => { S.search.map = e.target.value; localStorage.setItem('gc_map', e.target.value); refresh(c); };
 
   if (MAP) { try { MAP.remove(); } catch (_) { /* ignore */ } MAP = null; }
   Object.assign(MS, { mapId, map, pinLayer: null, party: null, svg: null, mode: null, room: null });
@@ -218,9 +218,10 @@ async function openRoom(planId, roomId) {
 }
 
 // live updates from the other DM: redraw in place, never reset the view
-LIVE_HOOKS.pins = (prev, next) => { if (S.tab === 'map' && MS.map && MS.map.type === 'image') drawPins(next); };
+const mapShowing = () => (S.tab === 'map' || S.pin === 'map') && MAP && document.body.contains(MAP.getContainer());
+LIVE_HOOKS.pins = (prev, next) => { if (mapShowing() && MS.map && MS.map.type === 'image') drawPins(next); };
 LIVE_HOOKS.plans = (prev, next) => {
-  if (S.tab !== 'map' || !MS.svg || !MS.map) return;
+  if (!mapShowing() || !MS.svg || !MS.map) return;
   const plan = next[MS.map.id]; if (!plan) return;
   stylePlan(MS.svg, plan);
   if (MS.room && !document.activeElement?.closest?.('#map-side')) openRoom(MS.map.id, MS.room);
