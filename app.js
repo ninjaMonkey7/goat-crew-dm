@@ -645,7 +645,8 @@ async function renderArc(c) {
   const dms = users.filter(u => u.role === 'dm');
   const arcs = [...new Set(cards.map(x => x.arc).filter(Boolean))];
   let arc = S.search.arc || localStorage.getItem('gc_arc');
-  if (!arcs.includes(arc)) arc = arcs[0] || '';
+  // default to the arc that is being played (has a beat marked now), else the newest
+  if (!arcs.includes(arc)) arc = arcs.find(a => cards.some(x => x.arc === a && x.kind === 'beat' && x.status === 'now')) || arcs[arcs.length - 1] || '';
   const inArc = cards.filter(x => x.arc === arc).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   const of = k => inArc.filter(x => x.kind === k);
   const beats = of('beat'), cast = of('npc'), clues = of('clue'), threads = of('thread'), about = of('about')[0];
