@@ -51,6 +51,37 @@ select, input, textarea { font-size: 15px; padding: 8px 10px; }
 #pin-pick { color: var(--fg); }
 .msg.ai { border-left-color: var(--dm); }
 
+/* ===== Parchment: anything read aloud or handed over sits on paper; DM secrets stay on dark ===== */
+:root { --paper: #e9dcc0; --paper-edge: #c9b48a; --ink: #2b2416; --ink-soft: #5c4d38; --ink-link: #6b3a2a;
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif; --display: "Cormorant Garamond", Georgia, serif; }
+details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text, #map-side #room-desc {
+  background-color: var(--paper);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.30 0 0 0 0 0.20 0 0 0 0 0.08 0.14 0 0 0 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  color: var(--ink); border: 1px solid var(--paper-edge); border-radius: 8px; padding: 12px 16px; margin: 8px 0;
+  box-shadow: inset 0 0 48px rgba(110, 80, 30, .14), 0 1px 0 rgba(0, 0, 0, .3);
+  font-family: var(--serif); font-size: 15.5px; line-height: 1.55;
+}
+.msg.ai .msg-text { font-size: 15px; }
+.msg.ai { background: transparent; border-color: transparent; border-left: 3px solid var(--dm); padding-left: 10px; }
+#map-side #room-desc { min-height: 96px; }
+#content-view { background: transparent; border: none; padding: 0; }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) :is(h1, h2, h3, h4) {
+  font-family: var(--display); font-weight: 700; color: var(--ink); border-bottom: 1px solid var(--paper-edge); letter-spacing: 0; padding-bottom: 2px; }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) h1 { font-size: 26px; }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) h2 { font-size: 22px; }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) h3 { font-size: 18px; }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) :is(b, strong) { color: #1d1810; }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) a { color: var(--ink-link); }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) blockquote { border-left: 3px solid #a6834f; color: var(--ink-soft); background: rgba(0, 0, 0, .04); padding: 4px 12px; }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) code { background: rgba(0, 0, 0, .08); color: var(--ink); }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) :is(th, td) { border-color: var(--paper-edge); }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) th { background: rgba(0, 0, 0, .06); }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) hr { border-top-color: var(--paper-edge); }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) .muted { color: var(--ink-soft); }
+:is(details.collapse.card > .md, div.card:not(.dm) > .md, [data-view] > .md, .reply > .md, .arc-notes > .md, .msg.ai .msg-text) img { border: 1px solid var(--paper-edge); }
+/* the DM-only inset inside a parchment entry: dark ink note, never on the handout */
+details.collapse.card > div.card.dm { background: #15121c; border: 1px solid rgba(196, 165, 240, .35); border-left: 3px solid var(--dm); margin-top: 6px; }
+
 /* ---------- Map ---------- */
 body.tab-map main { max-width: none; padding: 0; padding-bottom: 0; }
 .map-wrap { position: relative; }
