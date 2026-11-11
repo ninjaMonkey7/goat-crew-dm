@@ -136,7 +136,16 @@ function cavePath(r) {
 function buildPlanSVG(plan) {
   const svg = svgEl('svg', { viewBox: `0 0 ${plan.w} ${plan.h}`, xmlns: SVG_NS });
   svg.classList.add('plan', 'plan-' + (plan.style || 'building'));
+  // parchment: paper grain filter + cross-hatch pattern for unexplored rooms
+  const defs = svgEl('defs', {}, svg);
+  const hatch = svgEl('pattern', { id: 'hatch', width: 9, height: 9, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
+  svgEl('rect', { width: 9, height: 9, fill: '#d6c6a0' }, hatch);
+  svgEl('line', { x1: 0, y1: 0, x2: 0, y2: 9, stroke: '#9c8862', 'stroke-width': 1.3 }, hatch);
+  const grain = svgEl('filter', { id: 'grain', x: 0, y: 0, width: '100%', height: '100%' }, defs);
+  svgEl('feTurbulence', { type: 'fractalNoise', baseFrequency: '0.9', numOctaves: 2, stitchTiles: 'stitch' }, grain);
+  svgEl('feColorMatrix', { type: 'matrix', values: '0 0 0 0 0.30 0 0 0 0 0.20 0 0 0 0 0.08 0.11 0 0 0 0' }, grain);
   svgEl('rect', { x: 0, y: 0, width: plan.w, height: plan.h, class: 'plan-bg' }, svg);
+  svgEl('rect', { x: 0, y: 0, width: plan.w, height: plan.h, filter: 'url(#grain)', class: 'plan-grain' }, svg);
   const cave = plan.style === 'cave';
   if (!cave) {
     const [wx, wy, ww, wh] = plan.wall || [40, 40, plan.w - 80, plan.h - 80];
@@ -144,11 +153,16 @@ function buildPlanSVG(plan) {
     svgEl('rect', { x: wx, y: wy, width: ww, height: wh, rx: 14, class: 'plan-wall' }, svg);
   } else {
     const byId = Object.fromEntries(plan.rooms.map(r => [r.id, r]));
-    for (const [a, b] of plan.passages || []) {
-      const ra = byId[a], rb = byId[b]; if (!ra || !rb) continue;
-      svgEl('line', { x1: ra.x + ra.w / 2, y1: ra.y + ra.h / 2, x2: rb.x + rb.w / 2, y2: rb.y + rb.h / 2, class: 'plan-passage' }, svg);
+    const links = (plan.passages || []).map(([a, b]) => [byId[a], byId[b]]).filter(([ra, rb]) => ra && rb);
+    for (const cls of ['plan-passage-ink', 'plan-passage']) { // ink outline first, then the floor on top
+      for (const [ra, rb] of links) svgEl('line', { x1: ra.x + ra.w / 2, y1: ra.y + ra.h / 2, x2: rb.x + rb.w / 2, y2: rb.y + rb.h / 2, class: cls }, svg);
     }
   }
+  // compass rose, top right
+  const cx = plan.w - 70, cy = 70;
+  svgEl('circle', { cx, cy, r: 30, class: 'plan-compass' }, svg);
+  svgEl('path', { d: `M${cx},${cy - 26} L${cx + 9},${cy} L${cx},${cy + 26} L${cx - 9},${cy} Z`, class: 'plan-compass-needle' }, svg);
+  const nt = svgEl('text', { x: cx, y: cy - 36, 'text-anchor': 'middle', class: 'plan-compass-n' }, svg); nt.textContent = 'N';
   for (const r of plan.rooms) {
     const g = svgEl('g', { class: 'room', 'data-room': r.id }, svg);
     if (cave) svgEl('path', { d: cavePath(r), class: 'room-floor' }, g);

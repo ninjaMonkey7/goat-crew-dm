@@ -107,26 +107,32 @@ body.tab-map main { max-width: none; padding: 0; padding-bottom: 0; }
 .leaflet-popup-content { margin: 10px 12px; font-size: 14px; }
 .leaflet-popup-content .row { margin-top: 6px; }
 
-/* Floor plans (SVG) */
-svg.plan { width: 100%; height: 100%; }
-.plan-bg { fill: #16130e; }
-.plan-grounds { fill: #3b4a30; }
-.plan-wall { fill: none; stroke: #8a7a5a; stroke-width: 8; }
-.plan-passage { stroke: #5a4a36; stroke-width: 46; stroke-linecap: round; }
-.room-floor { fill: #332c22; stroke: #a08a62; stroke-width: 4; cursor: pointer; transition: fill .25s, stroke .25s; }
-.room:hover .room-floor { stroke: #e8e6df; }
-.room.explored .room-floor { fill: #d8c7a0; }
-.plan-cave .room-floor { fill: #3a3127; stroke: #8f7b5a; }
-.plan-cave .room.explored .room-floor { fill: #a3906c; }
-.room-label { fill: #cfc9b8; font: 700 22px/1 -apple-system, "Segoe UI", Roboto, sans-serif; pointer-events: none; paint-order: stroke; stroke: #16130e; stroke-width: 3px; stroke-linejoin: round; }
-.room.explored .room-label { fill: #2b2416; stroke: #f3ead3; }
-.room.party .room-floor { stroke: #e0a94e; stroke-width: 9; }
-.room.selected .room-floor { stroke: #7fb4d9; stroke-width: 9; }
+/* Floor plans (SVG): ink on parchment. Unexplored rooms are cross-hatched, explored rooms clean paper. */
+svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px rgba(0, 0, 0, .6)); }
+.plan-bg { fill: #e4d5b3; }
+.plan-grain { pointer-events: none; }
+.plan-grounds { fill: #d5c59e; stroke: #8a7657; stroke-width: 2; stroke-dasharray: 7 5; }
+.plan-wall { fill: none; stroke: #2b2416; stroke-width: 7; }
+.plan-passage-ink { stroke: #2b2416; stroke-width: 52; stroke-linecap: round; }
+.plan-passage { stroke: #cdb98f; stroke-width: 44; stroke-linecap: round; }
+.room-floor { fill: url(#hatch); stroke: #2b2416; stroke-width: 3; cursor: pointer; transition: fill .25s, stroke .25s; }
+.room:hover .room-floor { stroke: #6b3a2a; stroke-width: 4.5; }
+.room.explored .room-floor { fill: #f4e9d0; }
+.plan-cave .room-floor { stroke-width: 3.5; }
+.plan-cave .room.explored .room-floor { fill: #efe2c4; }
+.room-label { fill: #5c4d38; font: italic 600 22px/1 "Cormorant Garamond", Georgia, serif; pointer-events: none; paint-order: stroke; stroke: #d6c6a0; stroke-width: 4px; stroke-linejoin: round; }
+.room.explored .room-label { fill: #2b2416; font-style: normal; stroke: #f4e9d0; }
+.room.party .room-floor { stroke: #b8860b; stroke-width: 8; fill: #f8edd2; }
+.room.party .room-label { fill: #2b2416; font-style: normal; stroke: #f8edd2; }
+.room.selected .room-floor { stroke: #3a5a8c; stroke-width: 8; }
 .room-party { font-size: 40px; pointer-events: none; }
 .room-flag { font-size: 20px; pointer-events: none; }
-.plan-door { fill: #8b5a2b; stroke: #2b1d10; stroke-width: 1.5; }
-.plan-mark { fill: #e0a94e; font: 600 17px -apple-system, "Segoe UI", Roboto, sans-serif; pointer-events: none; paint-order: stroke; stroke: #16130e; stroke-width: 3px; }
-.plan-title { fill: #e8e6df; font: 700 30px Georgia, serif; pointer-events: none; }
+.plan-door { fill: #8b5a2b; stroke: #2b2416; stroke-width: 1.5; }
+.plan-mark { fill: #8c3b2f; font: italic 600 17px "Cormorant Garamond", Georgia, serif; pointer-events: none; paint-order: stroke; stroke: #e4d5b3; stroke-width: 3px; }
+.plan-title { fill: #2b2416; font: 700 30px "Cormorant Garamond", Georgia, serif; pointer-events: none; }
+.plan-compass { fill: none; stroke: #2b2416; stroke-width: 1.5; pointer-events: none; }
+.plan-compass-needle { fill: #8c3b2f; stroke: #2b2416; stroke-width: 1; pointer-events: none; }
+.plan-compass-n { fill: #2b2416; font: 700 18px "Cormorant Garamond", Georgia, serif; pointer-events: none; }
 
 /* ---------- Battle (DM controls) ---------- */
 .init-hp-ctl { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; justify-content: flex-end; }
