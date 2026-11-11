@@ -51,8 +51,18 @@
       <button data-tab="notes" class="tab">My Notes</button>
       <button data-tab="dm" class="tab dm-only hidden">DM</button>
       <button data-tab="settings" class="tab" title="Settings">⚙</button>
+      <select id="pin-pick" title="Pin a panel to the right of whatever tab you're on">
+        <option value="">📌 Pin…</option>
+        <option value="chat">💬 DM Chat</option>
+        <option value="notes">📝 My Notes</option>
+        <option value="battle">⚔️ Battle</option>
+        <option value="dice">🎲 Dice</option>
+        <option value="party">👥 Party</option>
+        <option value="map">🗺 Map</option>
+      </select>
     </nav>
     <main id="content"></main>
+    <aside id="rail" class="hidden"></aside>
   </div>
 </div>
 <div id="toast" class="hidden"></div>

@@ -132,10 +132,12 @@ function onEntityChange(entity, prev, next) {
   delete S.cache[entity];
   if (LIVE_HOOKS[entity]) { try { LIVE_HOOKS[entity](prev, next); } catch (e) { console.error(e); } }
   if (typeof onEntityEvent === 'function') onEntityEvent(entity, prev, next);
+  const typing = document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
   const tabEntity = { party: 'characters', battle: 'encounter', dice: 'rolls', board: 'notices', journal: 'journal', codex: 'codex', quests: 'quests', arc: 'arc', dm: entity }[S.tab];
-  if ((tabEntity === entity || S.tab === 'dm') && !S.formOpen) {
-    if (!document.activeElement || !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) render();
-  }
+  if ((tabEntity === entity || S.tab === 'dm') && !S.formOpen && !typing) render();
+  // the pinned panel in the right rail follows the same entity (chat and map update in place via LIVE_HOOKS)
+  const pinEntity = S.pin && S.pin !== S.tab ? { party: 'characters', battle: 'encounter', dice: 'rolls' }[S.pin] : null;
+  if (pinEntity === entity && !S.formOpen && !typing && typeof renderRail === 'function') renderRail();
 }
 
 // connectSSE keeps its old name — called from showMain() in app.js
