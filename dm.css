@@ -90,7 +90,8 @@ body.has-rail #rail { grid-column: 2; grid-row: 3; border-left: 1px solid var(--
   height: calc(100vh - 98px); overflow-y: auto; padding: 10px 12px 40px; }
 .rail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--muted); }
 #rail .chat-wrap { height: calc(100vh - 200px); min-height: 360px; }
-#rail #map-canvas { height: calc(100vh - 240px); min-height: 320px; }
+#rail #map-canvas { height: calc(100vh - 290px); min-height: 300px; }
+#toast { z-index: 3000; } /* above Leaflet's panes and controls */
 #rail .map-side { top: 48px; }
 @media (max-width: 900px) {
   body.has-rail #main { display: block; }
