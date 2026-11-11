@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Goat Crew — DM screen</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="dm.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐐</text></svg>">
+</head>
+<body>
+<div id="app">
+  <!-- Login: a GitHub token is the key to the private data repo; then say which DM you are -->
+  <div id="login" class="hidden">
+    <div class="login-box">
+      <h1>🐐 The Goat Crew</h1>
+      <p class="muted">DM screen — Kingdom of Mathar</p>
+      <label>GitHub token <span class="muted">(fine-grained · Contents: read &amp; write on the data repo)</span></label>
+      <input id="login-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+      <label>Who are you?</label>
+      <select id="login-user"><option value="">— paste your token first —</option></select>
+      <button id="login-btn" class="btn primary">Enter the Grumpy Goat</button>
+      <p id="login-err" class="err"></p>
+      <details class="collapse"><summary class="muted" style="font-size:13px;font-weight:400">Data repo settings</summary>
+        <div class="row"><input id="login-owner" placeholder="owner" style="flex:1;min-width:0"><input id="login-repo" placeholder="repo" style="flex:1;min-width:0"><input id="login-branch" placeholder="branch" style="width:90px"></div>
+        <p class="muted" style="font-size:12px;margin:6px 0 0">The private repo + branch that holds the campaign data. The token is stored only in this browser.</p>
+      </details>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div id="main" class="hidden">
+    <header>
+      <span class="brand">🐐 Goat Crew</span>
+      <span id="whoami" class="muted"></span>
+      <span id="live-dot" title="Live connection to the data repo">●</span>
+      <button id="logout" class="btn small ghost">Log out</button>
+    </header>
+    <nav id="tabs">
+      <button data-tab="map" class="tab">🗺 Map</button>
+      <button data-tab="chat" class="tab">💬 DM Chat</button>
+      <button data-tab="party" class="tab">Party</button>
+      <button data-tab="battle" class="tab">Battle</button>
+      <button data-tab="dice" class="tab">Dice</button>
+      <button data-tab="journal" class="tab">Journal</button>
+      <button data-tab="codex" class="tab">Codex</button>
+      <button data-tab="quests" class="tab">Quests</button>
+      <button data-tab="board" class="tab">Board</button>
+      <button data-tab="arc" class="tab dm-only hidden">Arc</button>
+      <button data-tab="notes" class="tab">My Notes</button>
+      <button data-tab="dm" class="tab dm-only hidden">DM</button>
+      <button data-tab="settings" class="tab" title="Settings">⚙</button>
+    </nav>
+    <main id="content"></main>
+  </div>
+</div>
+<div id="toast" class="hidden"></div>
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="gh.js"></script>
+<script src="bestiary.js"></script>
+<script src="map.js"></script>
+<script src="chat.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

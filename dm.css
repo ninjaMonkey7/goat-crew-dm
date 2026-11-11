@@ -1,0 +1,96 @@
+/* DM screen additions: map, DM chat, bestiary, settings. style.css is the original app's stylesheet. */
+
+/* ---------- Map ---------- */
+body.tab-map main { max-width: none; padding: 0; padding-bottom: 0; }
+.map-wrap { position: relative; }
+.map-bar { display: flex; gap: 8px; align-items: center; padding: 8px 10px; background: var(--bg2); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.map-bar select { max-width: 60vw; }
+#map-canvas { height: calc(100vh - 150px); min-height: 420px; background: #0f1115; }
+.leaflet-container { font: inherit; }
+.leaflet-div-icon { background: none; border: none; }
+.pin { display: flex; align-items: center; gap: 4px; white-space: nowrap; cursor: grab; }
+.pin-ico { font-size: 22px; line-height: 1; filter: drop-shadow(0 1px 2px #000); }
+.pin-lbl { font-size: 12px; font-weight: 700; color: #fff; background: rgba(20, 22, 28, .82); padding: 2px 7px; border-radius: 999px; border: 1px solid var(--accent); }
+.party-marker { font-size: 34px; line-height: 1; filter: drop-shadow(0 0 6px var(--accent)); animation: pulse 1.6s ease-in-out infinite; cursor: grab; }
+.map-side { position: absolute; top: 56px; right: 10px; width: 320px; max-width: calc(100vw - 20px); max-height: calc(100vh - 220px); overflow: auto;
+  background: var(--bg2); border: 1px solid var(--accent); border-radius: var(--radius); padding: 12px 14px; z-index: 1000; box-shadow: 0 6px 24px rgba(0, 0, 0, .5); }
+.map-side h3 { margin: 0 0 6px; }
+.map-side label { display: block; color: var(--muted); font-size: 12px; margin-top: 8px; }
+.map-side input, .map-side select, .map-side textarea { width: 100%; }
+.map-side textarea { min-height: 70px; }
+.map-hint { position: absolute; left: 50%; top: 60px; transform: translateX(-50%); background: var(--accent); color: #1a1408; font-weight: 700;
+  padding: 6px 14px; border-radius: 999px; z-index: 1000; pointer-events: none; }
+.leaflet-popup-content-wrapper { background: var(--bg2); color: var(--fg); border: 1px solid var(--line); }
+.leaflet-popup-tip { background: var(--bg2); }
+.leaflet-popup-content { margin: 10px 12px; font-size: 14px; }
+.leaflet-popup-content .row { margin-top: 6px; }
+
+/* Floor plans (SVG) */
+svg.plan { width: 100%; height: 100%; }
+.plan-bg { fill: #16130e; }
+.plan-grounds { fill: #3b4a30; }
+.plan-wall { fill: none; stroke: #8a7a5a; stroke-width: 8; }
+.plan-passage { stroke: #5a4a36; stroke-width: 46; stroke-linecap: round; }
+.room-floor { fill: #332c22; stroke: #a08a62; stroke-width: 4; cursor: pointer; transition: fill .25s, stroke .25s; }
+.room:hover .room-floor { stroke: #e8e6df; }
+.room.explored .room-floor { fill: #d8c7a0; }
+.plan-cave .room-floor { fill: #3a3127; stroke: #8f7b5a; }
+.plan-cave .room.explored .room-floor { fill: #a3906c; }
+.room-label { fill: #cfc9b8; font: 700 22px/1 -apple-system, "Segoe UI", Roboto, sans-serif; pointer-events: none; paint-order: stroke; stroke: #16130e; stroke-width: 3px; stroke-linejoin: round; }
+.room.explored .room-label { fill: #2b2416; stroke: #f3ead3; }
+.room.party .room-floor { stroke: #e0a94e; stroke-width: 9; }
+.room.selected .room-floor { stroke: #7fb4d9; stroke-width: 9; }
+.room-party { font-size: 40px; pointer-events: none; }
+.room-flag { font-size: 20px; pointer-events: none; }
+.plan-door { fill: #8b5a2b; stroke: #2b1d10; stroke-width: 1.5; }
+.plan-mark { fill: #e0a94e; font: 600 17px -apple-system, "Segoe UI", Roboto, sans-serif; pointer-events: none; paint-order: stroke; stroke: #16130e; stroke-width: 3px; }
+.plan-title { fill: #e8e6df; font: 700 30px Georgia, serif; pointer-events: none; }
+
+/* ---------- Battle (DM controls) ---------- */
+.init-hp-ctl { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; justify-content: flex-end; }
+.init-hp-ctl .btn.small { padding: 2px 7px; font-size: 12px; }
+.init-hp-ctl .init-hp { min-width: 54px; text-align: center; }
+.init-notes { font-size: 12px; font-weight: 400; }
+.init-row.down { opacity: .55; }
+.statblock { background: var(--bg2); border: 1px solid var(--dm); border-radius: 8px; padding: 10px 12px; margin: 0 0 4px 40px; font-size: 14px; }
+.statblock h4 { margin: 0 0 4px; color: var(--dm); }
+.statblock .sb-line { color: var(--muted); font-size: 13px; }
+.statblock ul { margin: 6px 0 0; padding-left: 18px; }
+.statblock li { margin-bottom: 2px; }
+#enc-monster { max-width: 100%; }
+
+/* ---------- DM chat ---------- */
+.chat-wrap { display: flex; flex-direction: column; height: calc(100vh - 140px); min-height: 480px; }
+.chat-quick { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.chat-quick .btn { font-size: 13px; padding: 6px 10px; }
+.chat-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 6px 2px; }
+.msg { max-width: 92%; border-radius: 12px; padding: 8px 12px; background: var(--bg3); border: 1px solid var(--line); align-self: flex-start; }
+.msg.mine { align-self: flex-end; background: #2a2f44; border-color: #3c4566; }
+.msg.ai { align-self: stretch; max-width: none; background: var(--bg2); border-left: 3px solid var(--dm); }
+.msg.ask { border-style: dashed; font-style: italic; }
+.msg.sys { align-self: center; background: none; border: none; color: var(--muted); font-size: 13px; }
+.msg-meta { font-size: 11px; color: var(--muted); margin-bottom: 2px; display: flex; gap: 8px; }
+.msg-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.ai .msg-text { white-space: normal; }
+.msg.streaming .msg-text::after { content: '▍'; animation: blink 1s steps(2) infinite; color: var(--accent); }
+@keyframes blink { 50% { opacity: 0; } }
+.chat-input { display: flex; gap: 8px; margin-top: 8px; align-items: flex-end; }
+.chat-input textarea { flex: 1; min-height: 52px; }
+.chat-btns { display: flex; flex-direction: column; gap: 6px; }
+.chat-empty { color: var(--muted); text-align: center; margin: auto; max-width: 420px; }
+.chat-empty b { color: var(--fg); }
+.ai-pick { display: inline-flex; gap: 4px; align-items: center; }
+
+/* ---------- Settings ---------- */
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+.settings-grid label { display: block; color: var(--muted); font-size: 13px; margin-top: 8px; }
+.settings-grid input, .settings-grid select { width: 100%; }
+.kbd { background: var(--bg3); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 13px; }
+
+@media (max-width: 600px) {
+  #map-canvas { height: calc(100vh - 160px); }
+  .map-side { top: auto; bottom: 10px; right: 10px; left: 10px; width: auto; max-height: 45vh; }
+  .init-row { grid-template-columns: 34px 1fr; }
+  .init-hp-ctl { grid-column: 1 / -1; justify-content: flex-start; }
+  .chat-wrap { height: calc(100vh - 130px); }
+}
