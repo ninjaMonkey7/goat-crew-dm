@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Goat Crew — DM screen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="dm.css">
@@ -38,8 +41,8 @@
       <button id="logout" class="btn small ghost">Log out</button>
     </header>
     <nav id="tabs">
-      <button data-tab="map" class="tab">🗺 Map</button>
-      <button data-tab="chat" class="tab">💬 DM Chat</button>
+      <button data-tab="map" class="tab">Map</button>
+      <button data-tab="chat" class="tab">DM Chat</button>
       <button data-tab="party" class="tab">Party</button>
       <button data-tab="battle" class="tab">Battle</button>
       <button data-tab="dice" class="tab">Dice</button>
@@ -50,24 +53,25 @@
       <button data-tab="arc" class="tab dm-only hidden">Arc</button>
       <button data-tab="notes" class="tab">My Notes</button>
       <button data-tab="dm" class="tab dm-only hidden">DM</button>
-      <button data-tab="settings" class="tab" title="Settings">⚙</button>
-      <select id="pin-pick" title="Pin a panel to the right of whatever tab you're on">
-        <option value="">📌 Pin…</option>
-        <option value="chat">💬 DM Chat</option>
-        <option value="notes">📝 My Notes</option>
-        <option value="battle">⚔️ Battle</option>
-        <option value="dice">🎲 Dice</option>
-        <option value="party">👥 Party</option>
-        <option value="map">🗺 Map</option>
+      <button data-tab="settings" class="tab" title="Settings">Settings</button>
+      <select id="pin-pick" title="Pin a panel to the right of whatever tab you're on" aria-label="Pin a panel">
+        <option value="">Pin a panel…</option>
+        <option value="chat">DM Chat</option>
+        <option value="notes">My Notes</option>
+        <option value="battle">Battle</option>
+        <option value="dice">Dice</option>
+        <option value="party">Party</option>
+        <option value="map">Map</option>
       </select>
     </nav>
     <main id="content"></main>
     <aside id="rail" class="hidden"></aside>
   </div>
 </div>
-<div id="toast" class="hidden"></div>
+<div id="toasts" aria-live="polite"></div>
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="gh.js"></script>
+<script src="icons.js"></script>
 <script src="bestiary.js"></script>
 <script src="map.js"></script>
 <script src="chat.js"></script>

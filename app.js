@@ -6,8 +6,11 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function toast(msg, ms = 2200) {
-  const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden');
-  clearTimeout(t._h); t._h = setTimeout(() => t.classList.add('hidden'), ms);
+  const host = $('#toasts'); if (!host) return;
+  const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = msg;
+  host.appendChild(t);
+  while (host.children.length > 4) host.firstChild.remove();
+  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 260); }, ms);
 }
 /* api() + connectSSE() come from gh.js (GitHub data layer), loaded before this file. */
 
@@ -138,6 +141,17 @@ $$('#tabs .tab').forEach(b => b.onclick = () => {
   render();
 });
 $('#pin-pick').onchange = e => setPin(e.target.value);
+const TAB_ICONS = { map: 'map', chat: 'chat', party: 'users', battle: 'swords', dice: 'dice', journal: 'book', codex: 'scroll', quests: 'flag', board: 'pin', arc: 'route', notes: 'notebook', dm: 'crown', settings: 'settings' };
+$$('#tabs .tab').forEach(b => { const n = TAB_ICONS[b.dataset.tab]; if (n) b.innerHTML = ic(n) + `<span>${esc(b.textContent.trim())}</span>`; });
+// Keyboard: N = next turn when the Battle panel is showing, / = jump to the DM chat box, Esc = close the map side panel / leave a field
+document.addEventListener('keydown', e => {
+  const tag = (e.target && e.target.tagName || '').toUpperCase();
+  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (e.target && e.target.isContentEditable);
+  if (e.key === 'Escape') { const side = $('#map-side'); if (side && !side.classList.contains('hidden') && typeof closeSide === 'function') closeSide(); if (typing) e.target.blur(); return; }
+  if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'n' || e.key === 'N') { const b = $('#b-next'); if (b) { e.preventDefault(); b.click(); } }
+  else if (e.key === '/') { e.preventDefault(); const t = $('#chat-text'); if (t) t.focus(); else { S.tab = 'chat'; localStorage.setItem('gc_tab', 'chat'); render().then(() => { const x = $('#chat-text'); if (x) x.focus(); }); } }
+});
 
 // ---------- render dispatch ----------
 /* Renders run one at a time and only the latest request is honoured, so switching tabs while a
@@ -178,7 +192,7 @@ async function renderOnce() {
 
 /* ---------- right rail: one pinned panel that stays open beside whatever tab is active ----------
    Only panels whose element ids don't clash with the other tabs are offered. */
-const RAIL_TABS = { chat: '💬 DM Chat', notes: '📝 My Notes', battle: '⚔️ Battle', dice: '🎲 Dice', party: '👥 Party', map: '🗺 Map' };
+const RAIL_TABS = { chat: 'DM Chat', notes: 'My Notes', battle: 'Battle', dice: 'Dice', party: 'Party', map: 'Map' };
 async function syncRail(force) {
   const rail = $('#rail');
   const show = !!(S.pin && RAIL_TABS[S.pin] && S.pin !== S.tab);
@@ -189,7 +203,7 @@ async function syncRail(force) {
   if (!show) { if (rail.dataset.tab) { rail.innerHTML = ''; delete rail.dataset.tab; } return; }
   if (rail.dataset.tab === S.pin && !force) return; // keep the rail's state (chat draft, scroll) across main-tab switches
   rail.dataset.tab = S.pin;
-  rail.innerHTML = `<div class="rail-head"><b>${RAIL_TABS[S.pin]}</b><button class="btn small ghost" id="rail-unpin" title="Unpin this panel">✕ unpin</button></div><div class="rail-body"></div>`;
+  rail.innerHTML = `<div class="rail-head"><b>${ic(TAB_ICONS[S.pin])} ${RAIL_TABS[S.pin]}</b><button class="btn small ghost" id="rail-unpin" title="Unpin this panel">${ic('x')} unpin</button></div><div class="rail-body"></div>`;
   $('#rail-unpin').onclick = () => setPin('');
   await renderInto(rail.querySelector('.rail-body'), S.pin);
 }
@@ -205,7 +219,7 @@ async function renderParty(c) {
     return `<div class="card char-card" data-id="${ch.id}">
       ${ch.portrait ? `<img class="portrait" src="${esc(ch.portrait)}" alt="">` : `<div class="portrait-ph">${esc((ch.name || '?')[0])}</div>`}
       <div style="flex:1">
-        <h3>${esc(ch.name)} ${ch.editable ? '✏️' : ''}</h3>
+        <h3>${esc(ch.name)} ${ch.editable ? ic('pencil', 'ic-muted') : ''}</h3>
         <div class="statline"><span>${esc(ch.race)} ${esc(ch.klass)}</span><span>Lv <b>${ch.level ?? '?'}</b></span>
           ${ch.ac != null ? `<span>AC <b>${ch.ac}</b></span>` : ''}
           ${ch.hpMax ? `<span>HP <b>${ch.hpCurrent ?? '?'}</b>/${ch.hpMax}</span>` : ''}</div>
@@ -384,7 +398,7 @@ async function renderCodex(c) {
         ${md(e.playerContent)}
         ${isDM && e.dmContent ? `<div class="card dm"><b style="color:var(--dm)">DM only:</b>${md(e.dmContent)}</div>` : ''}
         ${isDM ? `<div class="row">
-          <button class="btn small dm" data-reveal="${e.id}">${e.revealed ? '🙈 Hide from players' : '📜 Reveal to players'}</button>
+          <button class="btn small dm" data-reveal="${e.id}">${e.revealed ? ic('eyeoff') + ' Hide from players' : ic('eye') + ' Reveal to players'}</button>
           <button class="btn small" data-edit="${e.id}">Edit</button>
           <button class="btn small danger" data-del="${e.id}">Delete</button></div>` : ''}
       </details>`).join('') || '<p class="muted">Nothing here (yet). The DM may be hiding things…</p>'}
@@ -462,7 +476,7 @@ async function renderBattle(c) {
   const isDM = S.me.role === 'dm';
   const combatants = enc.combatants || [];
   if (!combatants.length) {
-    c.innerHTML = `<div class="card"><h3>⚔️ Battle</h3>
+    c.innerHTML = `<div class="card"><h3>${ic('swords')} Battle</h3>
       <p class="muted">No encounter running.${isDM ? ' Build one on the DM tab (+ Monster, + Add whole party), then run it from here.' : ' The moment the DM rolls initiative, the turn order shows up here — live.'}</p>
       ${isDM ? '<button class="btn dm" id="to-dm">Open the encounter tracker</button>' : ''}</div>`;
     if (isDM) $('#to-dm').onclick = () => { S.tab = 'dm'; localStorage.setItem('gc_tab', 'dm'); render(); };
@@ -479,22 +493,23 @@ async function renderBattle(c) {
   const mon = x => (isDM && x.monster && typeof BESTIARY !== 'undefined') ? BESTIARY.find(b => b.id === x.monster) : null;
   c.innerHTML = `
     <div class="card">
-      <div class="row spread"><h3 style="margin:0">⚔️ Round ${enc.round || 1} <span class="muted" style="font-weight:400;font-size:14px">· ${esc(active ? active.name : '')}'s turn</span></h3>
-        ${isDM ? `<span class="row"><button class="btn small" id="b-prev" title="Previous turn">◀</button><button class="btn small primary" id="b-next">▶ Next turn</button><span class="badge dm">DM view</span></span>` : '<span class="badge cat">live</span>'}</div>
-      ${activeIsMine ? '<div class="your-turn">⚔️ YOUR TURN</div>' : ''}
+      <div class="row spread"><h3 style="margin:0">${ic('swords')} Round ${enc.round || 1} <span class="muted" style="font-weight:400;font-size:14px">· ${esc(active ? active.name : '')}'s turn</span></h3>
+        ${isDM ? `<span class="row"><button class="btn small" id="b-prev" title="Previous turn" aria-label="Previous turn">${ic('skipback')}</button><button class="btn small primary" id="b-next" title="Next turn (N)">${ic('play')} Next turn</button><span class="badge dm">DM view</span></span>` : '<span class="badge cat">live</span>'}</div>
+      ${activeIsMine ? `<div class="your-turn">${ic('swords')} YOUR TURN</div>` : ''}
       <div class="init-list">
         ${combatants.map((x, i) => {
           const down = x.down ?? (Number(x.maxHp) > 0 && Number(x.hp) <= 0);
           const m = mon(x);
+          const pct = Number(x.maxHp) > 0 ? Math.max(0, Math.min(100, Math.round(100 * Number(x.hp || 0) / Number(x.maxHp)))) : 0;
           return `<div class="init-row ${i === turn ? 'turn' : ''} ${mineRow(x) ? 'mine' : ''} ${down ? 'down' : ''}">
             <span class="init-num">${x.init ?? '—'}</span>
-            <span class="init-name">${down ? '☠️ ' : ''}${esc(x.name || '—')}${mineRow(x) ? ' <span class="badge cat">you</span>' : ''}
+            <span class="init-name">${down ? ic('skull', 'ic-red') + ' ' : ''}${esc(x.name || '—')}${mineRow(x) ? ' <span class="badge cat">you</span>' : ''}
               ${isDM && x.notes ? `<div class="init-notes muted">${esc(x.notes)}</div>` : ''}</span>
             ${isDM ? `<span class="init-hp-ctl">
                 <button class="btn small" data-hp="-5" data-i="${i}">−5</button><button class="btn small" data-hp="-1" data-i="${i}">−1</button>
-                <span class="init-hp ${down ? 'low' : ''}">${x.hp ?? '?'}${x.maxHp ? '/' + x.maxHp : ''}</span>
+                <span class="init-hp ${down ? 'low' : ''}" style="--hp:${pct}%">${x.hp ?? '?'}${x.maxHp ? '/' + x.maxHp : ''}</span>
                 <button class="btn small" data-hp="1" data-i="${i}">+1</button><button class="btn small" data-hp="5" data-i="${i}">+5</button>
-                ${m ? `<button class="btn small dm" data-stat="${i}" title="Stat block">📖</button>` : ''}
+                ${m ? `<button class="btn small dm" data-stat="${i}" title="Stat block" aria-label="Stat block">${ic('book')}</button>` : ''}
               </span>` : (x.maxHp && isDM ? `<span class="init-hp ${down ? 'low' : ''}">${x.hp ?? '?'}/${x.maxHp}</span>` : '<span></span>')}
           </div>${m ? `<div class="statblock hidden" data-statblock="${i}">${statBlockHTML(m)}</div>` : ''}`;
         }).join('')}
@@ -528,7 +543,7 @@ function rollCrit(r) {
 function rollCard(r, fresh) {
   const { nat20, nat1 } = rollCrit(r);
   return `<div class="roll ${nat20 ? 'crit' : ''} ${nat1 ? 'fumble' : ''} ${fresh ? 'fresh' : ''}">
-    <div class="roll-total">${r.total}${nat20 ? ' ✨' : ''}${nat1 ? ' 💀' : ''}</div>
+    <div class="roll-total">${r.total}${nat20 ? ' ' + ic('sparkles', 'ic-gold') : ''}${nat1 ? ' ' + ic('skull', 'ic-red') : ''}</div>
     <div class="roll-body">
       <div class="roll-meta"><b>${esc(shortName(r.user))}</b>${r.label ? ` · ${esc(r.label)}` : ''}</div>
       <div class="roll-detail muted">${esc(r.formula)}${r.mode ? ` <span class="badge">${esc(r.mode)}</span>` : ''} · ${rollBreakdown(r)}</div>
@@ -552,7 +567,7 @@ async function renderDice(c) {
       </div>
       <div class="row" style="margin-top:8px">
         <input id="roll-label" placeholder="Stealth, Fireball, save…" style="flex:1" autocomplete="off">
-        <button class="btn primary" id="roll-go">🎲 Roll</button>
+        <button class="btn primary" id="roll-go">${ic('dice')} Roll</button>
       </div>
     </div>
     <div class="roll-feed">
@@ -576,7 +591,7 @@ async function renderDice(c) {
 
 // ---------- BOARD (noticeboard) ----------
 const NOTICE_TYPES = ['rumour', 'wanted', 'job', 'note'];
-const NOTICE_ICON = { rumour: '🗣️', wanted: '📜', job: '💰', note: '📌' };
+const NOTICE_ICON = { rumour: 'megaphone', wanted: 'scroll', job: 'coins', note: 'pin' };
 function noticeMeta(n) {
   return `<div class="notice-by muted">${esc(shortName(n.createdBy || '?'))}${n.ts ? ` · ${new Date(n.ts).toLocaleDateString()}` : ''}</div>`;
 }
@@ -595,10 +610,10 @@ async function renderBoard(c) {
   ];
   const replyFields = [{ key: 'content', label: 'Your reply (markdown ok)', type: 'textarea' }];
   c.innerHTML = `
-    <div class="toolbar"><h2 style="margin:0;flex:1">📌 Noticeboard</h2><button class="btn" id="add">+ New notice</button></div>
+    <div class="toolbar"><h2 style="margin:0;flex:1">${ic('pin')} Noticeboard</h2><button class="btn" id="add">+ New notice</button></div>
     <div id="form-slot"></div>
     ${tops.map(n => {
-      const icon = NOTICE_ICON[n.type] || '📌';
+      const icon = ic(NOTICE_ICON[n.type] || 'pin');
       const replies = repliesOf(n.id);
       return `<div class="card notice ${n.dmOnly ? 'dm' : ''}">
         <h3 style="margin:0 0 2px">${icon} ${esc(n.title || '(untitled)')}
@@ -606,7 +621,7 @@ async function renderBoard(c) {
         ${noticeMeta(n)}
         ${md(n.content)}
         <div class="row">
-          <button class="btn small" data-reply="${n.id}">↩ Reply</button>
+          <button class="btn small" data-reply="${n.id}">${ic('reply')} Reply</button>
           ${canEdit(n) ? `<button class="btn small" data-edit="${n.id}">Edit</button>
             <button class="btn small danger" data-del="${n.id}">Delete</button>` : ''}
         </div>
@@ -658,11 +673,11 @@ async function renderBoard(c) {
 
 // ---------- ARC (co-DM story board — DM only) ----------
 const ARC_KINDS = {
-  beat:   { label: 'Story beat', icon: '📍', statuses: ['planned', 'next', 'now', 'played', 'maybe'] },
-  npc:    { label: 'Cast', icon: '🎭', statuses: ['unmet', 'met', 'gone'] },
-  clue:   { label: 'Secret / clue', icon: '🔍', statuses: ['hidden', 'revealed'] },
-  thread: { label: 'Open thread', icon: '🧵', statuses: ['open', 'done'] },
-  about:  { label: 'Arc notes', icon: '📜', statuses: [] }
+  beat:   { label: 'Story beat', icon: 'mappin', statuses: ['planned', 'next', 'now', 'played', 'maybe'] },
+  npc:    { label: 'Cast', icon: 'drama', statuses: ['unmet', 'met', 'gone'] },
+  clue:   { label: 'Secret / clue', icon: 'search', statuses: ['hidden', 'revealed'] },
+  thread: { label: 'Open thread', icon: 'link', statuses: ['open', 'done'] },
+  about:  { label: 'Arc notes', icon: 'scroll', statuses: [] }
 };
 const BEAT_LABEL = { played: '✓ played', now: '▶ we are here', next: 'up next', planned: 'planned', maybe: 'maybe' };
 const snip = s => { const t = String(s || '').replace(/[#*_>`|]/g, '').replace(/\s+/g, ' ').trim(); return t.length > 110 ? t.slice(0, 107) + '…' : t; };
@@ -695,9 +710,9 @@ async function renderArc(c) {
   const codexBit = (x, small) => {
     const cx = codex.find(e => e.id === x.codexId);
     if (!cx) return '';
-    if (cx.revealed) return `<span class="badge active">📜 in Codex</span>`;
+    if (cx.revealed) return `<span class="badge active">${ic('scroll')} in Codex</span>`;
     const nudge = x.kind === 'npc' && x.status === 'met';
-    return `<button class="btn small dm ${nudge ? 'nudge' : ''}" data-reveal="${cx.id}">📜 ${nudge ? 'Met — reveal in Codex?' : (small ? 'Reveal' : 'Reveal in Codex')}</button>`;
+    return `<button class="btn small dm ${nudge ? 'nudge' : ''}" data-reveal="${cx.id}">${ic('scroll')} ${nudge ? 'Met — reveal in Codex?' : (small ? 'Reveal' : 'Reveal in Codex')}</button>`;
   };
 
   const now = beats.find(b => b.status === 'now');
@@ -716,7 +731,7 @@ async function renderArc(c) {
   };
 
   if (!arcs.length) {
-    c.innerHTML = `<div class="card dm"><h3>🧭 Arc board</h3>
+    c.innerHTML = `<div class="card dm"><h3>${ic('compass')} Arc board</h3>
       <p class="muted">Plan a story arc with your co-DM: the scene flow, who's in it, what's still secret, and what you two still need to decide. Live for both DMs, invisible to players.</p>
       <button class="btn dm" id="arc-new">+ Start an arc</button></div>`;
   } else {
@@ -729,18 +744,18 @@ async function renderArc(c) {
       </div>
       <div id="arc-focus"></div>
       <div class="card dm arc-head">
-        <h2 style="margin:0">🧭 ${esc(arc)}</h2>
-        <div class="arc-now">${now ? `▶ <b>We are here:</b> <button class="linkish" data-open="${now.id}">${esc(now.title)}</button>` : '<span class="muted">No beat marked “now” yet — open one and set it.</span>'}</div>
+        <h2 style="margin:0">${ic('compass')} ${esc(arc)}</h2>
+        <div class="arc-now">${now ? `${ic('play', 'ic-gold')} <b>We are here:</b> <button class="linkish" data-open="${now.id}">${esc(now.title)}</button>` : '<span class="muted">No beat marked “now” yet — open one and set it.</span>'}</div>
         ${next ? `<div class="muted">Up next: ${esc(next.title)}</div>` : ''}
         <div class="arc-progress"><div style="width:${pct}%"></div></div>
         <div class="row spread"><span class="muted">${played} of ${counted.length} beats played</span>
-          <button class="btn small primary" id="arc-advance">▶ Advance story</button></div>
-        ${about ? `<details class="collapse arc-notes"><summary>📜 Arc notes</summary>${md(about.content)}
+          <button class="btn small primary" id="arc-advance">${ic('play')} Advance story</button></div>
+        ${about ? `<details class="collapse arc-notes"><summary>${ic('scroll')} Arc notes</summary>${md(about.content)}
           <button class="btn small" data-open="${about.id}">Edit notes</button></details>` : '<button class="btn small" data-add="about" style="margin-top:8px">+ Arc notes</button>'}
       </div>
 
       <div class="arc-section">
-        <div class="row spread"><h3>📍 Story flow</h3><button class="btn small" data-add="beat">+ Beat</button></div>
+        <div class="row spread"><h3>${ic('mappin')} Story flow</h3><button class="btn small" data-add="beat">+ Beat</button></div>
         <div class="flow" id="flow">
           ${beats.map((b, i) => `<button class="beat s-${esc(b.status || 'planned')} ${dim(b)}" data-open="${b.id}">
             <span class="beat-num">${i + 1}</span>
@@ -753,7 +768,7 @@ async function renderArc(c) {
 
       <div class="arc-cols">
         <div class="arc-col">
-          <div class="row spread"><h3>🎭 Cast</h3><button class="btn small" data-add="npc">+</button></div>
+          <div class="row spread"><h3>${ic('drama')} Cast</h3><button class="btn small" data-add="npc">+</button></div>
           ${cast.map(n => `<div class="arc-card ${dim(n)} ${n.status === 'gone' ? 'gone' : ''}">
             <div class="row spread"><button class="linkish" data-open="${n.id}"><b>${esc(n.title)}</b></button>
               <span class="badge st-${esc(n.status || '')}">${esc(n.status || '')}</span></div>
@@ -762,11 +777,11 @@ async function renderArc(c) {
           </div>`).join('') || '<p class="muted">No cast yet.</p>'}
         </div>
         <div class="arc-col">
-          <div class="row spread"><h3>🔍 Secrets & clues <span class="muted" style="font-weight:400">${cluesOut}/${clues.length} out</span></h3><button class="btn small" data-add="clue">+</button></div>
+          <div class="row spread"><h3>${ic('search')} Secrets & clues <span class="muted" style="font-weight:400">${cluesOut}/${clues.length} out</span></h3><button class="btn small" data-add="clue">+</button></div>
           ${clues.map(checkRow).join('') || '<p class="muted">No secrets yet.</p>'}
         </div>
         <div class="arc-col">
-          <div class="row spread"><h3>🧵 Open threads <span class="muted" style="font-weight:400">${openThreads.length}</span></h3><button class="btn small" data-add="thread">+</button></div>
+          <div class="row spread"><h3>${ic('link')} Open threads <span class="muted" style="font-weight:400">${openThreads.length}</span></h3><button class="btn small" data-add="thread">+</button></div>
           ${openThreads.map(checkRow).join('') || '<p class="muted">Nothing open. Suspicious.</p>'}
           ${doneThreads.length ? `<details class="collapse"><summary class="muted">Done (${doneThreads.length})</summary>${doneThreads.map(checkRow).join('')}</details>` : ''}
         </div>
@@ -783,7 +798,7 @@ async function renderArc(c) {
     const statuses = ARC_KINDS[kind].statuses;
     const fields = [
       { key: 'title', label: 'Title' },
-      { key: 'kind', label: 'Type', type: 'select', options: Object.entries(ARC_KINDS).map(([value, k]) => ({ value, label: `${k.icon} ${k.label}` })) },
+      { key: 'kind', label: 'Type', type: 'select', options: Object.entries(ARC_KINDS).map(([value, k]) => ({ value, label: k.label })) },
       ...(statuses.length ? [{ key: 'status', label: 'Status', type: 'select', options: statuses }] : []),
       { key: 'owner', label: 'Owner', type: 'select', options: ownerOptions },
       ...(kind === 'beat' ? [{ key: 'session', label: 'Session #', ph: '16' }] : []),
@@ -860,7 +875,7 @@ async function renderArc(c) {
   if (!x || S.formOpen) return;
   const k = ARC_KINDS[x.kind] || ARC_KINDS.beat;
   slot.innerHTML = `<div class="card arc-focus">
-    <div class="row spread"><h3 style="margin:0">${k.icon} ${esc(x.title || '(untitled)')}</h3><button class="btn small ghost" id="af-close">✕</button></div>
+    <div class="row spread"><h3 style="margin:0">${ic(k.icon)} ${esc(x.title || '(untitled)')}</h3><button class="btn small ghost" id="af-close">✕</button></div>
     <div class="muted" style="font-size:13px">${k.label}${x.session ? ` · S${esc(x.session)}` : ''}${x.updatedBy ? ` · last edited by ${esc(shortName(x.updatedBy))}, ${new Date(x.updatedAt).toLocaleDateString()}` : ''}</div>
     ${k.statuses.length ? `<div class="seg">${k.statuses.map(s => `<button class="btn small ${x.status === s ? 'on' : ''}" data-status="${s}">${esc(x.kind === 'beat' ? BEAT_LABEL[s] : s)}</button>`).join('')}</div>` : ''}
     <div class="row" style="margin-bottom:6px"><label class="muted">Owner</label>
@@ -951,12 +966,12 @@ async function renderDM(c) {
   ]);
   const chars = await load('characters');
   c.innerHTML = `
-    <h2 style="color:var(--dm)">🎲 Dungeon Master</h2>
+    <h2 style="color:var(--dm)">${ic('crown')} Dungeon Master</h2>
 
-    <details class="collapse" open><summary>⚔️ Encounter tracker</summary>
+    <details class="collapse" open><summary>${ic('swords')} Encounter tracker</summary>
       <div class="card dm">
         <div class="row spread"><b>Round <span id="enc-round">${enc.round || 1}</span></b>
-          <span><button class="btn small primary" id="enc-next">▶ Next turn</button>
+          <span><button class="btn small primary" id="enc-next">${ic('play')} Next turn</button>
           <button class="btn small" id="round-minus">−</button> <button class="btn small" id="round-plus">+ Round</button>
           <button class="btn small danger" id="enc-clear">Clear</button></span></div>
         <table class="enc"><thead><tr><th>Init</th><th>Name</th><th>HP</th><th>Max</th><th>Notes</th><th></th></tr></thead>
@@ -975,7 +990,7 @@ async function renderDM(c) {
       </div>
     </details>
 
-    <details class="collapse" open><summary>📖 Session prep</summary>
+    <details class="collapse" open><summary>${ic('book')} Session prep</summary>
       <div id="prep-list">${prep.map(p => `
         <details class="collapse card dm"><summary>${esc(p.title)}</summary>
           <div data-view="${p.id}">${md(p.content)}</div>
@@ -985,14 +1000,14 @@ async function renderDM(c) {
       <button class="btn dm" id="prep-add">+ New prep page</button>
     </details>
 
-    <details class="collapse"><summary>👥 Users</summary>
+    <details class="collapse"><summary>${ic('users')} Users</summary>
       <div class="card dm"><table class="enc"><thead><tr><th>User</th><th>Role</th><th>Character</th></tr></thead><tbody>
         ${users.map(u => `<tr><td>${esc(u.name)}</td><td>${u.role === 'dm' ? '<span class="badge dm">DM</span>' : 'player'}</td>
           <td>${esc(chars.find(x => x.id === u.characterId)?.name || '—')}</td></tr>`).join('')}
       </tbody></table><p class="muted" style="font-size:13px">Logins are GitHub tokens now (⚙ Settings). Only DM users can enter this screen.</p></div>
     </details>
 
-    <details class="collapse"><summary>🕐 Recent activity (all edits)</summary>
+    <details class="collapse"><summary>${ic('clock')} Recent activity (all edits)</summary>
       <div class="card">${history.map(h => `<div class="hist">${new Date(h.ts).toLocaleString()} — <b>${esc(h.user)}</b> · ${esc(h.entity)} · <b>${esc(h.field)}</b></div>`).join('') || '<p class="muted">No activity yet.</p>'}</div>
     </details>
   `;
