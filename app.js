@@ -25,7 +25,7 @@ function md(src) {
     .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<i>$2</i>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/&lt;span[^&]*&gt;/g, '').replace(/&lt;\/span&gt;/g, '');
+    .replace(/&lt;span\b.*?&gt;/g, '').replace(/&lt;\/span&gt;/g, '');
   const flushPara = () => { if (para.length) { out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; } };
   const closeAll = () => {
     flushPara();
