@@ -55,7 +55,8 @@ git push -u origin main
 | 💬 **DM Chat** | Messages between the two of you. **Catch me up / Options from here / Remind me about… / Encounter idea / NPC on the spot / Recap** ask the assistant; its answer lands in the thread for both DMs. `Enter` sends, `Ctrl/⌘+Enter` asks. |
 | **Party** | Character cards. Tap one for HP/AC/gold editing, conditions, DM notes, the full sheet. |
 | **Battle** | Run the fight: −/+ HP, ▶ Next turn, 📖 stat block. Build the encounter on the **DM** tab: **+ Monster** picks from ~50 SRD monsters, rolls initiative and fills AC/HP/attacks; **+ Add whole party** adds the PCs. |
-| **Journal / Codex / Quests / Board / Arc / My Notes / DM** | As before. The Arc board shows the current arc (*White Cross Hospital*), with the Saltwick arc kept. |
+| **Journal** | Session recaps. **Draft tonight's recap** opens a new entry the assistant fills from the DM chat since the last entry, rooms explored and noted on the map, story beats played, and the activity log, in the voice of the previous recap. Edit, then Save; nothing is stored until you do. |
+| **Codex / Quests / Board / Arc / My Notes / DM** | As before. The Arc board opens on the arc in play (*White Cross Hospital*), with the Saltwick arc kept. |
 | ⚙ **Settings** | Tokens, data repo, assistant model and effort, "forget everything on this device". |
 
 The green ● in the header means the screen is polling the data branch. Red: check the network or the token.

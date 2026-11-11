@@ -330,6 +330,7 @@ async function renderJournal(c) {
     <div class="toolbar">
       <input type="search" id="jq" placeholder="Search the journal…" value="${esc(S.search.journal || '')}">
       <button class="btn" id="add">+ New entry</button>
+      ${isDM ? `<button class="btn dm" id="recap" title="The assistant drafts a recap from tonight's chat, map notes and activity; you edit, then save">${ic('bot')} Draft tonight's recap</button>` : ''}
     </div>
     <div id="form-slot"></div>
     ${shown.map(e => `
@@ -361,6 +362,14 @@ async function renderJournal(c) {
     $('#form-slot').scrollIntoView({ behavior: 'smooth' });
   };
   $('#add').onclick = () => openForm({ session: (Math.max(0, ...entries.map(e => e.session || 0)) + 1) || '' });
+  if (isDM && $('#recap')) $('#recap').onclick = () => {
+    const next = (Math.max(0, ...entries.map(e => e.session || 0)) + 1) || 1;
+    openForm({ session: next, title: `Session ${next} - `, tags: [] });
+    S.formOpen = true; // keep live updates from re-rendering over the draft
+    const done = () => { S.formOpen = false; };
+    $('#save').addEventListener('click', done); $('#cancel').addEventListener('click', done);
+    if (typeof draftRecap === 'function') draftRecap(entries, next);
+  };
   $$('[data-edit]').forEach(b => b.onclick = () => openForm(entries.find(e => e.id === b.dataset.edit), b.dataset.edit));
   $$('[data-del]').forEach(b => b.onclick = async () => { if (confirm('Delete this entry?')) { await api(`/api/journal/${b.dataset.del}`, { method: 'DELETE' }); render(); } });
 }

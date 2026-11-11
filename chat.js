@@ -75,8 +75,8 @@ ${snapshot}`;
 }
 
 // ---------- streaming call to the Messages API ----------
-async function streamClaude({ system, messages, onText, signal }) {
-  const body = { model: AI.model, max_tokens: 3000, stream: true, messages, system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }], output_config: { effort: AI.effort } };
+async function streamClaude({ system, messages, onText, signal, maxTokens = 3000 }) {
+  const body = { model: AI.model, max_tokens: maxTokens, stream: true, messages, system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }], output_config: { effort: AI.effort } };
   const headers = { 'content-type': 'application/json', 'x-api-key': AI.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
   const withFallback = /^claude-(opus|sonnet|fable)-5/.test(AI.model);
   if (withFallback) { body.fallbacks = 'default'; headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; }
@@ -206,6 +206,81 @@ async function askAssistant(prompt, label) {
     if (e.name !== 'AbortError') toast('Assistant: ' + why, 5000);
   }
   await refreshChat();
+}
+
+// ---------- journal: draft tonight's recap into the open entry form ----------
+async function draftRecap(entries, nextSession) {
+  const ta = document.querySelector('#form-slot textarea[data-k="content"]');
+  const titleEl = document.querySelector('#form-slot [data-k="title"]');
+  const tagsEl = document.querySelector('#form-slot [data-k="tags"]');
+  if (!ta) return;
+  if (!AI.key) { ta.value = 'Add your Anthropic API key under Settings to draft recaps, or write the entry by hand.'; toast('Add your Anthropic API key in Settings first', 4000); return; }
+  ta.value = 'Drafting from tonight\'s chat, map notes, story beats and the activity log…';
+  ta.disabled = true;
+  try {
+    const [snapshot, chat, plans, maps, hist, arc, enc] = await Promise.all([campaignSnapshot(), load('chat'), load('plans'), load('maps'), api('/api/history'), load('arc'), load('encounter')]);
+    const last = [...entries].sort((a, b) => (b.session || 0) - (a.session || 0) || String(b.ts || '').localeCompare(String(a.ts || '')))[0];
+    const since = (last && last.ts) ? last.ts : new Date(Date.now() - 12 * 3600e3).toISOString();
+    const when = ts => String(ts || '').slice(0, 16).replace('T', ' ');
+    const chatLines = chat.filter(m => m.ts > since && m.kind !== 'sys').map(m =>
+      `- [${when(m.ts)}] ${m.kind === 'ai' ? 'Assistant suggestion (a plan, not an event)' : shortName(m.user)}: ${trim(m.text, m.kind === 'ai' ? 300 : 900)}`).join('\n');
+    const histLines = hist.filter(h => h.ts > since).map(h => `- [${when(h.ts)}] ${shortName(h.user)} · ${h.entity} · ${h.field}: ${JSON.stringify(h.old)} → ${JSON.stringify(h.new)}`.slice(0, 220)).join('\n');
+    const rooms = Object.entries(plans || {}).flatMap(([pid, plan]) => plan.rooms.filter(r => r.explored || r.notes).map(r =>
+      `- ${(maps.find(m => m.id === pid) || {}).name || pid} / ${r.name}${plan.party === r.id ? ' (party is here now)' : ''}${r.explored ? ' (explored)' : ''}${r.notes ? ': ' + trim(r.notes, 500) : ''}`)).join('\n');
+    const beats = arc.filter(x => x.kind === 'beat' && (x.status === 'played' || x.status === 'now')).map(x => `- ${x.arc}: ${x.title} [${x.status}]`).join('\n');
+    const tracker = (enc.combatants || []).length ? `Round ${enc.round}: ` + enc.combatants.map(x => `${x.name} ${x.hp}/${x.maxHp}`).join(', ') : 'nothing on the tracker';
+    const prompt = `Draft the Journal recap for session ${nextSession} of The Goat Crew.
+
+Voice: match the previous recap below. Narrative past tense, playful, specific, player-facing: this entry is visible to players, so leave out DM-only secrets unless the sources show they were revealed in play.
+
+Format, exactly:
+Title: Session ${nextSession} - <short evocative title>
+
+## <scene heading>
+(4 to 8 sections in the order things happened, 1 to 3 short paragraphs each)
+
+## Memorable moments
+(3 to 6 bullets)
+
+## Loose ends
+(bullets: what the party left unresolved)
+
+Tags: <3 to 6 comma-separated tags: places, NPCs, items>
+
+Rules: treat only the sources below as events. Assistant suggestions in the chat are plans, not events, unless a DM message or the activity log confirms them. Where the sources are thin, write what they support and put [fill in: what to add] where the DMs should add detail. No questions, no preamble.
+
+### Previous recap (style sample)
+${last ? last.title + '\n' + trim(last.content, 2500) : '(none yet)'}
+
+### DM chat since the last entry (${when(since)})
+${chatLines || '(no messages)'}
+
+### Map rooms explored or noted
+${rooms || '(none)'}
+
+### Story beats played
+${beats || '(none)'}
+
+### Activity log since the last entry
+${histLines || '(none)'}
+
+### Tracker
+${tracker}`;
+    let text = '';
+    const res = await streamClaude({ system: systemPrompt(snapshot), messages: [{ role: 'user', content: prompt }], maxTokens: 4500,
+      onText: t => { text = t; ta.value = t; ta.scrollTop = ta.scrollHeight; } });
+    text = res.text || text;
+    const lines = text.split('\n');
+    const ti = lines.findIndex(l => /^title:/i.test(l.trim()));
+    if (ti >= 0) { if (titleEl) titleEl.value = lines[ti].replace(/^\s*title:\s*/i, '').trim(); lines.splice(ti, 1); }
+    const tg = lines.findIndex(l => /^tags:/i.test(l.trim()));
+    if (tg >= 0) { if (tagsEl) tagsEl.value = lines[tg].replace(/^\s*tags:\s*/i, '').trim(); lines.splice(tg, 1); }
+    ta.value = lines.join('\n').trim() + (res.stop === 'max_tokens' ? '\n\n[fill in: the draft was cut off at the length limit]' : '');
+    toast('Draft ready. Read it, fix anything, then Save.', 4500);
+  } catch (e) {
+    ta.value = `Drafting failed: ${e.message}\n\nWrite the entry by hand, or check the API key under Settings and try again.`;
+    toast('Recap: ' + e.message, 5000);
+  } finally { ta.disabled = false; ta.focus(); }
 }
 
 // ---------- settings ----------
