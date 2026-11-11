@@ -20,8 +20,8 @@ async function renderMap(c) {
     <div class="map-wrap">
       <div class="map-bar">
         <select id="map-pick">${maps.map(m => `<option value="${m.id}" ${m.id === mapId ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>
-        ${map.type === 'image' ? `<button class="btn small" id="pin-add">📍 Add pin</button><button class="btn small" id="party-set">🐐 Party here</button>` : `<span class="muted" style="font-size:13px">Tap a room: notes, explored, party position</span>`}
-        <button class="btn small ghost" id="map-fit" title="Fit to screen">⤢ Fit</button>
+        ${map.type === 'image' ? `<button class="btn small" id="pin-add">${ic('mappin')} Add pin</button><button class="btn small" id="party-set">🐐 Party here</button>` : `<span class="muted" style="font-size:13px">Tap a room: notes, explored, party position</span>`}
+        <button class="btn small ghost" id="map-fit" title="Fit to screen">${ic('maximize')} Fit</button>
         <span class="muted" style="font-size:12px;margin-left:auto">scroll / pinch to zoom · drag to pan</span>
       </div>
       <div id="map-canvas"></div>
@@ -93,7 +93,7 @@ async function openPinForm(pos, pin = null) {
   const v = pin || { label: '', icon: '📍', codexId: '' };
   const linked = codex.find(e => e.id === v.codexId);
   side.classList.remove('hidden');
-  side.innerHTML = `<div class="row spread"><h3>${pin ? '📍 Pin' : '📍 New pin'}</h3><button class="btn small ghost" id="side-close">✕</button></div>
+  side.innerHTML = `<div class="row spread"><h3>${ic('mappin')} ${pin ? 'Pin' : 'New pin'}</h3><button class="btn small ghost" id="side-close" aria-label="Close">${ic('x')}</button></div>
     <label>Label</label><input id="pin-label" value="${esc(v.label)}" placeholder="What is here?">
     <label>Icon</label><select id="pin-icon">${PIN_ICONS.map(i => `<option ${i === v.icon ? 'selected' : ''}>${i}</option>`).join('')}</select>
     <label>Codex entry</label><select id="pin-codex"><option value="">— none —</option>${codex.map(e => `<option value="${e.id}" ${e.id === v.codexId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select>
@@ -194,7 +194,7 @@ async function openRoom(planId, roomId) {
   MS.svg.querySelector(`[data-room="${roomId}"]`).classList.add('selected');
   const side = $('#map-side');
   side.classList.remove('hidden');
-  side.innerHTML = `<div class="row spread"><h3>${plan.party === r.id ? '🐐 ' : ''}<span id="room-title">${esc(r.name)}</span></h3><button class="btn small ghost" id="side-close">✕</button></div>
+  side.innerHTML = `<div class="row spread"><h3>${plan.party === r.id ? '🐐 ' : ''}<span id="room-title">${esc(r.name)}</span></h3><button class="btn small ghost" id="side-close" aria-label="Close">${ic('x')}</button></div>
     <div class="row" style="margin-top:4px">
       <button class="btn small ${plan.party === r.id ? 'on' : 'primary'}" id="room-party">${plan.party === r.id ? '🐐 Party is here' : '🐐 Party moves here'}</button>
       <label class="row" style="gap:5px;margin:0"><input type="checkbox" id="room-explored" ${r.explored ? 'checked' : ''}> explored</label>

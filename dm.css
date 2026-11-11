@@ -1,5 +1,56 @@
 /* DM screen additions: map, DM chat, bestiary, settings. style.css is the original app's stylesheet. */
 
+/* ===== Midnight Console theme: tokens override style.css ===== */
+:root {
+  --bg: #0b0d12; --bg2: #141822; --bg3: #1b2030; --line: rgba(255, 255, 255, .09);
+  --fg: #f3f4f6; --muted: #9aa3b5; --accent: #f2c15e; --accent2: #7fd1c9;
+  --green: #4ade80; --red: #f87171; --dm: #c4a5f0; --radius: 10px;
+  --sans: Inter, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+html, body { font-family: var(--sans); font-size: 15px; }
+h1, h2, h3 { letter-spacing: -.01em; }
+h2 { font-size: 20px; } h3 { font-size: 16px; }
+main { padding: 12px; }
+.card { padding: 12px 14px; margin-bottom: 10px; }
+.btn { padding: 8px 12px; font-size: 14px; min-height: 36px; display: inline-flex; align-items: center; gap: 6px; transition: border-color .15s, background .15s, color .15s; }
+.btn.small { padding: 4px 10px; min-height: 30px; font-size: 13px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1408; }
+.btn.primary:hover { background: #f6cf7d; }
+.btn.on { border-color: var(--accent); color: var(--accent); }
+.tab { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: 14px; }
+.tab .ic { width: 16px; height: 16px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.ic { width: 1.1em; height: 1.1em; vertical-align: -.2em; flex-shrink: 0; }
+h2 .ic, h3 .ic, summary .ic { margin-right: 4px; }
+.ic-red { color: var(--red); } .ic-gold { color: var(--accent); } .ic-muted { color: var(--muted); }
+/* numbers: mono + tabular so columns line up */
+.init-num, .init-hp, .roll-total, .roll-detail, .stat-box input, table.enc input.num, .statline b, .badge, .beat-num { font-variant-numeric: tabular-nums; }
+.init-num, .init-hp, .roll-total, .stat-box input, table.enc input.num { font-family: var(--mono); }
+/* battle rows: HP pill fills with the remaining fraction */
+.init-list { gap: 6px; }
+.init-row { grid-template-columns: 48px 1fr auto; padding: 8px 10px; }
+.init-num { font-size: 15px; }
+.init-hp { display: inline-block; min-width: 76px; text-align: center; padding: 4px 10px; border-radius: 6px; color: var(--fg);
+  background: linear-gradient(90deg, rgba(74, 222, 128, .28) var(--hp, 0%), rgba(255, 255, 255, .05) var(--hp, 0%)); }
+.init-hp.low { background: linear-gradient(90deg, rgba(248, 113, 113, .32) var(--hp, 0%), rgba(255, 255, 255, .05) var(--hp, 0%)); }
+.init-hp-ctl .btn.small { min-width: 40px; min-height: 36px; font-family: var(--mono); justify-content: center; }
+@media (pointer: coarse) { .init-hp-ctl .btn.small, .btn.step, .die-btn, .tab { min-height: 44px; } .init-hp-ctl .btn.small { min-width: 44px; } }
+.your-turn { font-size: 18px; letter-spacing: .08em; }
+/* toasts: top-right stack */
+#toast { display: none; }
+#toasts { position: fixed; top: 12px; right: 12px; z-index: 3000; display: flex; flex-direction: column; gap: 8px; max-width: min(380px, 92vw); pointer-events: none; }
+.toast { background: var(--bg3); border: 1px solid var(--accent); border-left-width: 4px; border-radius: 8px; padding: 10px 14px; font-size: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45); animation: toast-in .2s ease; }
+.toast.out { opacity: 0; transform: translateY(-6px); transition: opacity .25s, transform .25s; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+select, input, textarea { font-size: 15px; padding: 8px 10px; }
+.badge { font-size: 11px; }
+#pin-pick { color: var(--fg); }
+.msg.ai { border-left-color: var(--dm); }
+
 /* ---------- Map ---------- */
 body.tab-map main { max-width: none; padding: 0; padding-bottom: 0; }
 .map-wrap { position: relative; }

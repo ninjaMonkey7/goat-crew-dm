@@ -118,18 +118,18 @@ async function renderChat(c) {
   c.innerHTML = `
     <div class="chat-wrap">
       <div class="chat-quick">
-        <button class="btn" data-q="catchup" title="Where are we, what's open, what to remember">🧭 Catch me up</button>
-        <button class="btn" data-q="options" title="3 ways the next scene could go">🔀 Options from here</button>
-        <span class="ai-pick"><select id="chat-who"><option value="">🧠 Remind me about…</option>${people.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select></span>
-        <button class="btn" data-q="encounter">⚔️ Encounter idea</button>
-        <button class="btn" data-q="npc">🎭 NPC on the spot</button>
-        <button class="btn" data-q="recap">📜 Recap so far</button>
-        ${streaming ? '<button class="btn danger" id="chat-stop">■ Stop</button>' : ''}
+        <button class="btn" data-q="catchup" title="Where are we, what's open, what to remember">${ic('compass')} Catch me up</button>
+        <button class="btn" data-q="options" title="3 ways the next scene could go">${ic('shuffle')} Options from here</button>
+        <span class="ai-pick"><select id="chat-who" aria-label="Remind me about a character"><option value="">Remind me about…</option>${people.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select></span>
+        <button class="btn" data-q="encounter">${ic('swords')} Encounter idea</button>
+        <button class="btn" data-q="npc">${ic('drama')} NPC on the spot</button>
+        <button class="btn" data-q="recap">${ic('scroll')} Recap so far</button>
+        ${streaming ? `<button class="btn danger" id="chat-stop">${ic('square')} Stop</button>` : ''}
       </div>
       <div id="chat-log" class="chat-log"></div>
       <div class="chat-input">
         <textarea id="chat-text" placeholder="Message your co-DM… or ask the assistant (e.g. what does Keth owe the Wraith?)"></textarea>
-        <div class="chat-btns"><button class="btn" id="chat-send" title="Only the two DMs see this">💬 Send</button><button class="btn primary" id="chat-ask" title="Both DMs see the answer">🤖 Ask</button></div>
+        <div class="chat-btns"><button class="btn" id="chat-send" title="Only the two DMs see this (Enter)">${ic('send')} Send</button><button class="btn primary" id="chat-ask" title="Both DMs see the answer (Ctrl/⌘ Enter)">${ic('bot')} Ask</button></div>
       </div>
     </div>`;
   drawChat(msgs, true);
@@ -145,7 +145,7 @@ async function renderChat(c) {
 function msgHTML(m) {
   const mine = m.user === S.me.name;
   const when = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-  if (m.kind === 'ai') return `<div class="msg ai"><div class="msg-meta"><b style="color:var(--dm)">🤖 Assistant</b>${m.askedBy ? `<span>for ${esc(shortName(m.askedBy))}</span>` : ''}<span>${when}</span></div><div class="msg-text">${md(m.text)}</div></div>`;
+  if (m.kind === 'ai') return `<div class="msg ai"><div class="msg-meta"><b style="color:var(--dm)">${ic('bot')} Assistant</b>${m.askedBy ? `<span>for ${esc(shortName(m.askedBy))}</span>` : ''}<span>${when}</span></div><div class="msg-text">${md(m.text)}</div></div>`;
   if (m.kind === 'sys') return `<div class="msg sys">${esc(m.text)}</div>`;
   return `<div class="msg ${mine ? 'mine' : ''} ${m.kind === 'ask' ? 'ask' : ''}"><div class="msg-meta"><b>${esc(shortName(m.user))}</b>${m.kind === 'ask' ? '<span>asked the assistant</span>' : ''}<span>${when}</span></div><div class="msg-text">${esc(m.text)}</div></div>`;
 }
@@ -182,7 +182,7 @@ async function askAssistant(prompt, label) {
   await api('/api/chat', { method: 'POST', body: { text: label || prompt, kind: 'ask' } });
   const el = document.createElement('div');
   el.className = 'msg ai streaming';
-  el.innerHTML = `<div class="msg-meta"><b style="color:var(--dm)">🤖 Assistant</b><span>thinking…</span></div><div class="msg-text"></div>`;
+  el.innerHTML = `<div class="msg-meta"><b style="color:var(--dm)">${ic('bot')} Assistant</b><span>thinking…</span></div><div class="msg-text"></div>`;
   const controller = new AbortController();
   streaming = { controller, el };
   await refreshChat();
@@ -212,10 +212,10 @@ async function askAssistant(prompt, label) {
 async function renderSettings(c) {
   const setup = await api('/api/setup');
   c.innerHTML = `
-    <h2>⚙ Settings <span class="muted" style="font-size:14px;font-weight:400">— stored only in this browser</span></h2>
+    <h2>${ic('settings')} Settings <span class="muted" style="font-size:14px;font-weight:400">— stored only in this browser</span></h2>
     <div class="settings-grid">
       <div class="card">
-        <h3>🤖 Assistant (Anthropic)</h3>
+        <h3>${ic('bot')} Assistant (Anthropic)</h3>
         <label>API key ${AI.key ? '<span class="badge active">set</span>' : '<span class="badge hidden-e">missing</span>'}</label>
         <input id="st-aikey" type="password" autocomplete="off" placeholder="${AI.key ? 'saved — paste to replace' : 'sk-ant-…'}">
         <label>Model</label>
@@ -226,7 +226,7 @@ async function renderSettings(c) {
         <button class="btn primary" id="st-ai-save">Save</button>
       </div>
       <div class="card">
-        <h3>🐙 GitHub (campaign data)</h3>
+        <h3>${ic('github')} GitHub (campaign data)</h3>
         <label>Token ${setup.hasToken ? '<span class="badge active">set</span>' : '<span class="badge hidden-e">missing</span>'}</label>
         <input id="st-ghtoken" type="password" autocomplete="off" placeholder="${setup.hasToken ? 'saved — paste to replace' : 'github_pat_…'}">
         <label>Data repo</label>
@@ -237,7 +237,8 @@ async function renderSettings(c) {
       </div>
       <div class="card">
         <h3>Shortcuts</h3>
-        <p class="muted" style="font-size:14px">DM Chat: <span class="kbd">Enter</span> sends to your co-DM, <span class="kbd">Ctrl/⌘ + Enter</span> asks the assistant.<br>
+        <p class="muted" style="font-size:14px">Anywhere: <span class="kbd">N</span> next turn while the Battle panel is showing, <span class="kbd">/</span> jump to the chat box, <span class="kbd">Esc</span> close the map panel.<br>
+        DM Chat: <span class="kbd">Enter</span> sends to your co-DM, <span class="kbd">Ctrl/⌘ + Enter</span> asks the assistant.<br>
         Map: tap a room for notes; <b>Party moves here</b> is what your co-DM sees.<br>
         Battle: run a fight from the Battle tab (−/+ HP, ▶ Next turn, 📖 stat block); add monsters from the DM tab.</p>
         <p class="muted" style="font-size:13px">Live updates poll the data repo every 4 s: ● green in the header means connected.</p>

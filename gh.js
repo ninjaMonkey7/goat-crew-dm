@@ -36,7 +36,7 @@ function b64decode(b64) {
 }
 
 // ---------- GitHub REST ----------
-function fail(code, msg) { const e = new Error(msg); e.code = code; if (typeof toast === 'function') toast(msg, 3500); throw e; }
+function fail(code, msg) { const e = new Error(msg); e.code = code; if (typeof toast === 'function' && msg !== 'Not logged in') toast(msg, 3500); throw e; }
 async function gh(path, opts = {}) {
   const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(opts.headers || {}) };
   if (TOKEN) headers.Authorization = 'Bearer ' + TOKEN;
