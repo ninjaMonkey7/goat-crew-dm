@@ -139,7 +139,15 @@ $$('#tabs .tab').forEach(b => b.onclick = () => {
 });
 
 // ---------- render dispatch ----------
-async function render() {
+/* Renders run one at a time and only the latest request is honoured, so switching tabs while a
+   slow render (e.g. the map image) is still in flight can never let the stale render clobber the new tab. */
+let renderChain = Promise.resolve(), renderSeq = 0;
+function render() {
+  const seq = ++renderSeq;
+  renderChain = renderChain.then(async () => { if (seq === renderSeq) await renderOnce(); }).catch(e => console.error('render', e));
+  return renderChain;
+}
+async function renderOnce() {
   $$('#tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === S.tab));
   document.body.classList.toggle('tab-map', S.tab === 'map');
   const c = $('#content');

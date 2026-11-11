@@ -34,7 +34,7 @@ async function renderMap(c) {
   Object.assign(MS, { mapId, map, pinLayer: null, party: null, svg: null, mode: null, room: null });
   MAP = L.map('map-canvas', { crs: L.CRS.Simple, minZoom: -4, maxZoom: 3, zoomSnap: 0.25, zoomDelta: 0.5, attributionControl: false, wheelPxPerZoomLevel: 90 });
 
-  if (map.type === 'image') await mountImageMap(map, pins);
+  if (map.type === 'image') mountImageMap(map, pins).catch(e => toast('Could not load the map image: ' + e.message, 4000));
   else if (plan) mountPlan(map, plan);
   else { $('#map-canvas').innerHTML = `<p class="muted" style="padding:20px">No floor plan "${esc(map.id)}" in plans.json.</p>`; return; }
 
@@ -43,23 +43,24 @@ async function renderMap(c) {
 
 // ---------- raster maps: image + pins + party ----------
 async function mountImageMap(map, pins) {
+  const m = MAP; // this render's map; the image may finish loading after the DM has moved on
   const bounds = [[0, 0], [map.height, map.width]];
   MS.bounds = bounds;
-  let url;
-  try { url = await media(map.path); } catch (e) { toast('Could not load the map image: ' + e.message, 4000); return; }
-  L.imageOverlay(url, bounds).addTo(MAP);
-  MAP.fitBounds(bounds, { padding: [10, 10] });
-  MAP.setMaxBounds([[-map.height * 0.5, -map.width * 0.5], [map.height * 1.5, map.width * 1.5]]);
-  MS.pinLayer = L.layerGroup().addTo(MAP);
+  m.fitBounds(bounds, { padding: [10, 10] });
+  m.setMaxBounds([[-map.height * 0.5, -map.width * 0.5], [map.height * 1.5, map.width * 1.5]]);
+  MS.pinLayer = L.layerGroup().addTo(m);
   drawPins(pins);
 
   $('#pin-add').onclick = () => setMode(MS.mode === 'pin' ? null : 'pin');
   $('#party-set').onclick = () => setMode(MS.mode === 'party' ? null : 'party');
-  MAP.on('click', async e => {
+  m.on('click', async e => {
     if (MS.mode === 'pin') { setMode(null); openPinForm(fromLL(map, e.latlng)); }
     else if (MS.mode === 'party') { setMode(null); const p = fromLL(map, e.latlng); await api('/api/pins', { method: 'POST', body: { op: 'party', mapId: map.id, x: p.x, y: p.y } }); drawPins(await load('pins')); toast('🐐 Party moved'); }
     else closeSide();
   });
+  const url = await media(map.path); // slow on first load; cached afterwards
+  if (m !== MAP || MS.map !== map) return; // the DM switched maps or tabs meanwhile
+  L.imageOverlay(url, bounds).addTo(m);
 }
 function setMode(mode) {
   MS.mode = mode;
