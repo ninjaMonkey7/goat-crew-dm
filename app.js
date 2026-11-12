@@ -324,6 +324,38 @@ function formValues(container) {
 }
 
 // ---------- JOURNAL ----------
+const isSessionParent = e => /^session\s*\d+/i.test(String(e.title || ''));
+function journalEntryHTML(e, { child = false, sortMode, isDM, count = 0 }) {
+  return `<details class="collapse card ${e.dmOnly ? 'dm' : ''} ${child ? 'jchild' : ''}">
+        <summary>${!child && e.session ? `<span class="badge">S${e.session}</span> ` : ''}${child ? '<span class="jarrow" aria-hidden="true">↳</span> ' : ''}${esc(e.title)}
+          ${count ? ` <span class="badge cat" title="${count} more under this session">+${count}</span>` : ''}
+          ${e.dmOnly ? ' <span class="badge dm">DM only</span>' : ''}
+          ${(e.tags || []).map(t => ` <span class="badge cat">${esc(t)}</span>`).join('')}${sortMode === 'custom' ? `<span class="jmove"><button class="btn small" data-move="${e.id}" data-dir="-1" title="Move up" aria-label="Move up">▲</button><button class="btn small" data-move="${e.id}" data-dir="1" title="Move down" aria-label="Move down">▼</button></span>` : ''}</summary>
+        ${md(e.content)}
+        <div class="row">
+          ${(isDM || !e.dmOnly) ? `<button class="btn small" data-edit="${e.id}">Edit</button>` : ''}
+          ${isDM ? `<button class="btn small danger" data-del="${e.id}">Delete</button>` : ''}
+        </div>
+      </details>`;
+}
+/* Group by session: the "Session N" entry leads, the rest of that session nest under it. Groups keep the
+   order of the sorted list (by their lead entry); children keep their sorted order too. */
+function renderJournalGroups(shown, sortMode, isDM) {
+  if (!shown.length) return '<p class="muted">Nothing found.</p>';
+  const groups = new Map();
+  for (const e of shown) {
+    const k = e.session ?? '';
+    if (!groups.has(k)) groups.set(k, { session: e.session ?? null, parent: null, children: [], first: e });
+    const g = groups.get(k);
+    if (isSessionParent(e) && !g.parent) g.parent = e; else g.children.push(e);
+  }
+  const lead = g => g.parent || g.first;
+  return [...groups.values()].sort((a, b) => shown.indexOf(lead(a)) - shown.indexOf(lead(b))).map(g => {
+    const head = g.parent ? journalEntryHTML(g.parent, { sortMode, isDM, count: g.children.length })
+      : `<div class="card jhead"><span class="badge">${g.session != null ? 'S' + g.session : '—'}</span> <span class="muted">${g.session != null ? `Session ${g.session} (no session entry yet)` : 'No session number'}</span></div>`;
+    return `<div class="jgroup">${head}${g.children.length ? `<div class="jchildren">${g.children.map(e => journalEntryHTML(e, { child: true, sortMode, isDM })).join('')}</div>` : ''}</div>`;
+  }).join('');
+}
 async function renderJournal(c) {
   const entries = await load('journal');
   const q = (S.search.journal || '').toLowerCase();
@@ -357,18 +389,8 @@ async function renderJournal(c) {
       ${isDM ? `<button class="btn dm" id="recap" title="The assistant drafts a recap from tonight's chat, map notes and activity; you edit, then save">${ic('bot')} Draft tonight's recap</button>` : ''}
     </div>
     <div id="form-slot"></div>
-    ${shown.map(e => `
-      <details class="collapse card ${e.dmOnly ? 'dm' : ''}">
-        <summary>${e.session ? `<span class="badge">S${e.session}</span> ` : ''}${esc(e.title)}
-          ${e.dmOnly ? ' <span class="badge dm">DM only</span>' : ''}
-          ${(e.tags || []).map(t => ` <span class="badge cat">${esc(t)}</span>`).join('')}${sortMode === 'custom' ? `<span class="jmove"><button class="btn small" data-move="${e.id}" data-dir="-1" title="Move up" aria-label="Move up">▲</button><button class="btn small" data-move="${e.id}" data-dir="1" title="Move down" aria-label="Move down">▼</button></span>` : ''}</summary>
-        ${md(e.content)}
-        <div class="row">
-          ${(isDM || !e.dmOnly) ? `<button class="btn small" data-edit="${e.id}">Edit</button>` : ''}
-          ${isDM ? `<button class="btn small danger" data-del="${e.id}">Delete</button>` : ''}
-        </div>
-      </details>`).join('') || '<p class="muted">Nothing found.</p>'}
-    ${sortMode === 'custom' && shown.length ? '<p class="muted" style="font-size:13px">Custom order is shared: both DMs see it. New entries land at the end until you move them.</p>' : ''}
+    ${renderJournalGroups(shown, sortMode, isDM)}
+    ${sortMode === 'custom' && shown.length ? '<p class="muted" style="font-size:13px">Custom order is shared: both DMs see it. Arrows move an entry among its siblings; session entries move as a group.</p>' : ''}
   `;
   $('#jq').oninput = e => { S.search.journal = e.target.value; render(); };
   $('#jq').onfocus = e => e.target.setSelectionRange(e.target.value.length, e.target.value.length);
@@ -376,11 +398,15 @@ async function renderJournal(c) {
   $$('[data-move]').forEach(b => b.onclick = async ev => {
     ev.preventDefault(); ev.stopPropagation();
     // custom order over the full list (not just the search hits), swapped in one save
-    const list = [...entries].sort(JSORTS.custom);
-    const i = list.findIndex(x => x.id === b.dataset.move), j = i + Number(b.dataset.dir);
-    if (i < 0 || j < 0 || j >= list.length) return;
-    [list[i], list[j]] = [list[j], list[i]];
-    const orders = {}; list.forEach((x, k) => { orders[x.id] = k + 1; });
+    const me = entries.find(x => x.id === b.dataset.move); if (!me) return;
+    const dir = Number(b.dataset.dir), parent = isSessionParent(me);
+    const sib = entries.filter(x => parent ? isSessionParent(x) : (!isSessionParent(x) && (x.session ?? null) === (me.session ?? null))).sort(JSORTS.custom);
+    const i = sib.findIndex(x => x.id === me.id), j = i + dir;
+    if (i < 0 || j < 0 || j >= sib.length) return;
+    const eff = x => x.pos ?? x.order ?? 0;
+    let mine = eff(sib[j]), theirs = eff(sib[i]);
+    if (mine === theirs) mine = theirs + dir; // identical values: nudge so the order is unambiguous
+    const orders = { [me.id]: mine, [sib[j].id]: theirs };
     try { await api('/api/journal/reorder', { method: 'PUT', body: { orders } }); } catch (_) { return; } // the toast already explains
     render();
   });

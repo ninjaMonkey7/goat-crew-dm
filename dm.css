@@ -186,7 +186,14 @@ body.has-rail #rail { grid-column: 2; grid-row: 3; border-left: 1px solid var(--
   body.has-rail #rail { position: static; height: auto; border-left: none; border-top: 2px solid var(--line); }
 }
 
-/* ---------- Journal custom order ---------- */
+/* ---------- Journal hierarchy + custom order ---------- */
+.jgroup { margin-bottom: 14px; }
+.jgroup > details.collapse.card { margin-bottom: 6px; }
+.jchildren { margin-left: 22px; padding-left: 12px; border-left: 2px solid var(--line); }
+.jchildren details.collapse.card { margin-bottom: 6px; }
+.jchildren details.collapse.card > summary { font-weight: 500; padding: 8px 0; }
+.jarrow { color: var(--muted); margin-right: 2px; }
+.jhead { padding: 8px 12px; margin-bottom: 6px; }
 .jmove { float: right; display: inline-flex; gap: 4px; margin-left: 8px; }
 .jmove .btn.small { padding: 2px 8px; min-height: 26px; font-size: 12px; }
 #jsort { max-width: 46vw; }
