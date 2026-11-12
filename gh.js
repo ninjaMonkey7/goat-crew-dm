@@ -237,7 +237,7 @@ function rollDice(formula, mode) {
 
 const CHAR_FIELDS = ['name', 'player', 'race', 'klass', 'level', 'hpCurrent', 'hpMax', 'ac', 'gold', 'slots', 'conditions', 'content', 'dmNotes', 'portrait'];
 const COLLECTIONS = {
-  journal: { view: journalView, fields: ['session', 'title', 'content', 'tags', 'dmOnly'] },
+  journal: { view: journalView, fields: ['session', 'title', 'content', 'tags', 'dmOnly', 'pos'] },
   codex: { view: codexView, fields: ['category', 'name', 'playerContent', 'dmContent', 'image', 'revealed'] },
   quests: { view: questView, fields: ['title', 'status', 'notes', 'dmNotes', 'dmOnly'] },
   notices: { view: noticeView, fields: ['title', 'content', 'type', 'dmOnly', 'parentId'] },
@@ -338,6 +338,13 @@ async function route(path, method, body) {
   }
   if ((m = path.match(/^\/api\/characters\/([\w]+)\/history$/)) && method === 'GET') {
     return [...RAW.history, ...pendingHistory].filter(h => h.entity === 'character' && h.entityId === m[1]).sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 50);
+  }
+
+  // --- journal custom order: all positions in one commit ---
+  if (path === '/api/journal/reorder' && method === 'PUT') {
+    const orders = (body && body.orders) || {};
+    await save('journal', arr => { for (const e of arr) if (Number.isFinite(orders[e.id])) e.pos = orders[e.id]; return arr; }, `${who}: reorder journal`);
+    return { ok: true };
   }
 
   // --- journal / codex / quests / notices / arc ---

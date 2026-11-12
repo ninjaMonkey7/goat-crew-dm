@@ -329,6 +329,19 @@ async function renderJournal(c) {
   const q = (S.search.journal || '').toLowerCase();
   const isDM = S.me.role === 'dm';
   const shown = entries.filter(e => !q || (e.title + ' ' + e.content + ' ' + (e.tags || []).join(' ')).toLowerCase().includes(q));
+  // sort: by session, by when it was added, by title, or a custom order (pos) arranged with ▲▼
+  const sortMode = S.search.journalSort || localStorage.getItem('gc_jsort') || 'session-desc';
+  const added = e => String(e.ts || '') || String(e.order || '');
+  const JSORTS = {
+    'session-desc': (a, b) => (b.session ?? -1) - (a.session ?? -1) || added(b).localeCompare(added(a)),
+    'session-asc': (a, b) => (a.session ?? 1e9) - (b.session ?? 1e9) || added(a).localeCompare(added(b)),
+    'added-desc': (a, b) => added(b).localeCompare(added(a)),
+    'added-asc': (a, b) => added(a).localeCompare(added(b)),
+    'title': (a, b) => String(a.title || '').localeCompare(String(b.title || '')),
+    'custom': (a, b) => (a.pos ?? a.order ?? 0) - (b.pos ?? b.order ?? 0)
+  };
+  shown.sort(JSORTS[sortMode] || JSORTS['session-desc']);
+  const JSORT_LABELS = [['session-desc', 'Session: newest first'], ['session-asc', 'Session: oldest first'], ['added-desc', 'Added: newest first'], ['added-asc', 'Added: oldest first'], ['title', 'Title A–Z'], ['custom', 'Custom order (▲▼)']];
   const fields = [
     { key: 'session', label: 'Session #', ph: '15' },
     { key: 'title', label: 'Title', ph: 'Session 15 — …' },
@@ -339,6 +352,7 @@ async function renderJournal(c) {
   c.innerHTML = `
     <div class="toolbar">
       <input type="search" id="jq" placeholder="Search the journal…" value="${esc(S.search.journal || '')}">
+      <select id="jsort" title="Sort order" aria-label="Sort order">${JSORT_LABELS.map(([v, l]) => `<option value="${v}" ${v === sortMode ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <button class="btn" id="add">+ New entry</button>
       ${isDM ? `<button class="btn dm" id="recap" title="The assistant drafts a recap from tonight's chat, map notes and activity; you edit, then save">${ic('bot')} Draft tonight's recap</button>` : ''}
     </div>
@@ -347,16 +361,29 @@ async function renderJournal(c) {
       <details class="collapse card ${e.dmOnly ? 'dm' : ''}">
         <summary>${e.session ? `<span class="badge">S${e.session}</span> ` : ''}${esc(e.title)}
           ${e.dmOnly ? ' <span class="badge dm">DM only</span>' : ''}
-          ${(e.tags || []).map(t => ` <span class="badge cat">${esc(t)}</span>`).join('')}</summary>
+          ${(e.tags || []).map(t => ` <span class="badge cat">${esc(t)}</span>`).join('')}${sortMode === 'custom' ? `<span class="jmove"><button class="btn small" data-move="${e.id}" data-dir="-1" title="Move up" aria-label="Move up">▲</button><button class="btn small" data-move="${e.id}" data-dir="1" title="Move down" aria-label="Move down">▼</button></span>` : ''}</summary>
         ${md(e.content)}
         <div class="row">
           ${(isDM || !e.dmOnly) ? `<button class="btn small" data-edit="${e.id}">Edit</button>` : ''}
           ${isDM ? `<button class="btn small danger" data-del="${e.id}">Delete</button>` : ''}
         </div>
       </details>`).join('') || '<p class="muted">Nothing found.</p>'}
+    ${sortMode === 'custom' && shown.length ? '<p class="muted" style="font-size:13px">Custom order is shared: both DMs see it. New entries land at the end until you move them.</p>' : ''}
   `;
   $('#jq').oninput = e => { S.search.journal = e.target.value; render(); };
   $('#jq').onfocus = e => e.target.setSelectionRange(e.target.value.length, e.target.value.length);
+  $('#jsort').onchange = e => { S.search.journalSort = e.target.value; localStorage.setItem('gc_jsort', e.target.value); render(); };
+  $$('[data-move]').forEach(b => b.onclick = async ev => {
+    ev.preventDefault(); ev.stopPropagation();
+    // custom order over the full list (not just the search hits), swapped in one save
+    const list = [...entries].sort(JSORTS.custom);
+    const i = list.findIndex(x => x.id === b.dataset.move), j = i + Number(b.dataset.dir);
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    const orders = {}; list.forEach((x, k) => { orders[x.id] = k + 1; });
+    try { await api('/api/journal/reorder', { method: 'PUT', body: { orders } }); } catch (_) { return; } // the toast already explains
+    render();
+  });
   const openForm = (values = {}, id = null) => {
     $('#form-slot').innerHTML = `<div class="card">${entryForm(fields, { ...values, tags: (values.tags || []).join(', ') })}
       <div class="row" style="margin-top:8px"><button class="btn primary" id="save">Save</button><button class="btn" id="cancel">Cancel</button></div></div>`;
