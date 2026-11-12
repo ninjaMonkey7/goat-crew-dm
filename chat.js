@@ -6,7 +6,9 @@
 const AI = {
   get key() { return localStorage.getItem('gc_ai_key') || ''; },
   get model() { return localStorage.getItem('gc_ai_model') || 'claude-opus-5-5'; },
-  get effort() { return localStorage.getItem('gc_ai_effort') || 'medium'; }
+  get effort() { return localStorage.getItem('gc_ai_effort') || 'medium'; },
+  // through the login server the key lives there; otherwise it must be in this browser
+  get ready() { return (typeof workerMode === 'function' && workerMode()) ? true : !!this.key; }
 };
 const AI_MODELS = [['claude-opus-5-5', 'Claude Opus 5.5 (default)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (faster, cheaper)'], ['claude-haiku-5-5', 'Claude Haiku 5.5 (fastest)']];
 let streaming = null; // { controller, el }
@@ -77,10 +79,14 @@ ${snapshot}`;
 // ---------- streaming call to the Messages API ----------
 async function streamClaude({ system, messages, onText, signal, maxTokens = 3000 }) {
   const body = { model: AI.model, max_tokens: maxTokens, stream: true, messages, system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }], output_config: { effort: AI.effort } };
-  const headers = { 'content-type': 'application/json', 'x-api-key': AI.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
+  const viaWorker = typeof workerMode === 'function' && workerMode();
+  const headers = viaWorker
+    ? { 'content-type': 'application/json', 'authorization': 'Bearer ' + WSESSION, 'anthropic-version': '2023-06-01' }
+    : { 'content-type': 'application/json', 'x-api-key': AI.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
   const withFallback = /^claude-(opus|sonnet|fable)-5/.test(AI.model);
   if (withFallback) { body.fallbacks = 'default'; headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; }
-  const send = () => fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: JSON.stringify(body), signal });
+  const endpoint = viaWorker ? WORKER + '/ai/messages' : 'https://api.anthropic.com/v1/messages';
+  const send = () => fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal });
   let r = await send();
   if (r.status === 400 && withFallback) {
     const txt = await r.text();
@@ -176,7 +182,7 @@ async function quickAsk(kind) {
 
 async function askAssistant(prompt, label) {
   if (streaming) { toast('The assistant is still answering — hit Stop first'); return; }
-  if (!AI.key) { toast('Add your Anthropic API key in ⚙ Settings first', 4000); S.tab = 'settings'; localStorage.setItem('gc_tab', 'settings'); render(); return; }
+  if (!AI.ready) { toast('Add your Anthropic API key in ⚙ Settings first', 4000); S.tab = 'settings'; localStorage.setItem('gc_tab', 'settings'); render(); return; }
   if (S.tab === 'chat' && S.pin === 'chat') return;
   const me = S.me.name;
   await api('/api/chat', { method: 'POST', body: { text: label || prompt, kind: 'ask' } });
@@ -214,7 +220,7 @@ async function draftRecap(entries, nextSession) {
   const titleEl = document.querySelector('#form-slot [data-k="title"]');
   const tagsEl = document.querySelector('#form-slot [data-k="tags"]');
   if (!ta) return;
-  if (!AI.key) { ta.value = 'Add your Anthropic API key under Settings to draft recaps, or write the entry by hand.'; toast('Add your Anthropic API key in Settings first', 4000); return; }
+  if (!AI.ready) { ta.value = 'Add your Anthropic API key under Settings to draft recaps, or write the entry by hand.'; toast('Add your Anthropic API key in Settings first', 4000); return; }
   ta.value = 'Drafting from tonight\'s chat, map notes, story beats and the activity log…';
   ta.disabled = true;
   try {
@@ -287,21 +293,30 @@ ${tracker}`;
 async function renderSettings(c) {
   const setup = await api('/api/setup');
   const otherDMs = (await api('/api/users/list')).filter(u => u.role === 'dm' && u.id !== S.me.id);
+  const worker = setup.mode === 'worker';
   c.innerHTML = `
     <h2>${ic('settings')} Settings <span class="muted" style="font-size:14px;font-weight:400">— stored only in this browser</span></h2>
     <div class="settings-grid">
       <div class="card">
+        <h3>${ic('key')} Login server</h3>
+        <p class="muted" style="font-size:13px">${worker ? `This device logs in through <b>${esc(setup.worker)}</b>${setup.workerFromConfig ? ' (set in the site config)' : ''}. It holds the GitHub token and the assistant key; you hold a passcode.` : 'Not in use: this device logs in with a GitHub token. A login server (a free Cloudflare Worker, see worker/README.md in the private repo) keeps every secret off the browsers and lets DMs log in with a passcode.'}</p>
+        <label>Server URL</label>
+        <input id="st-worker" value="${esc(setup.worker || '')}" placeholder="https://goat-crew-dm.….workers.dev" spellcheck="false">
+        <div class="row" style="margin-top:8px"><button class="btn primary" id="st-worker-save">Save & log in again</button>${worker ? '<button class="btn" id="st-worker-off">Use a GitHub token instead</button>' : ''}</div>
+      </div>
+      <div class="card">
         <h3>${ic('bot')} Assistant (Anthropic)</h3>
+        ${worker ? `<p class="muted" style="font-size:13px">The key lives on the login server: ${setup.assistantOnServer ? '<span class="badge active">configured</span>' : '<span class="badge hidden-e">not configured</span> (add ANTHROPIC_API_KEY to the worker)'}.</p>` : `
         <label>API key ${AI.key ? '<span class="badge active">set</span>' : '<span class="badge hidden-e">missing</span>'}</label>
-        <input id="st-aikey" type="password" autocomplete="off" placeholder="${AI.key ? 'saved — paste to replace' : 'sk-ant-…'}">
+        <input id="st-aikey" type="password" autocomplete="off" placeholder="${AI.key ? 'saved — paste to replace' : 'sk-ant-…'}">`}
         <label>Model</label>
         <select id="st-model">${AI_MODELS.map(([v, l]) => `<option value="${v}" ${v === AI.model ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <label>Effort (how long it thinks)</label>
         <select id="st-effort">${['low', 'medium', 'high'].map(v => `<option ${v === AI.effort ? 'selected' : ''}>${v}</option>`).join('')}</select>
-        <p class="muted" style="font-size:13px">Create a key at console.anthropic.com → API keys. Each DM uses their own key; it never leaves this browser except to call Anthropic directly.</p>
+        ${worker ? '' : '<p class="muted" style="font-size:13px">Create a key at console.anthropic.com → API keys. Each DM uses their own key; it never leaves this browser except to call Anthropic directly.</p>'}
         <button class="btn primary" id="st-ai-save">Save</button>
       </div>
-      <div class="card">
+      <div class="card ${worker ? 'hidden' : ''}">
         <h3>${ic('github')} GitHub (campaign data)</h3>
         <label>Token ${setup.hasToken ? '<span class="badge active">set</span>' : '<span class="badge hidden-e">missing</span>'}</label>
         <input id="st-ghtoken" type="password" autocomplete="off" placeholder="${setup.hasToken ? 'saved — paste to replace' : 'github_pat_…'}">
@@ -309,13 +324,17 @@ async function renderSettings(c) {
         <div class="row"><input id="st-owner" value="${esc(setup.owner)}" placeholder="owner" style="flex:1;min-width:0"><input id="st-repo" value="${esc(setup.repo)}" placeholder="repo" style="flex:1;min-width:0"><input id="st-branch" value="${esc(setup.branch)}" placeholder="branch" style="width:90px"></div>
         <p class="muted" style="font-size:13px">Fine-grained token: github.com → Settings → Developer settings → Fine-grained tokens → only the data repo → Repository permissions → Contents: Read and write.</p>
         <button class="btn primary" id="st-gh-save">Save & reload</button>
-        <button class="btn danger" id="st-forget">Forget everything on this device</button>
-        <hr style="border:none;border-top:1px solid var(--line);margin:14px 0 10px">
+      </div>
+      <div class="card">
         <h3>${ic('users')} Invite your co-DM</h3>
-        <p class="muted" style="font-size:13px">Makes a link that carries <b>this device's GitHub token</b> and signs them in as the DM you pick. They open it once on their device and they're in: no GitHub account or token of their own. Send it privately (not in a group chat), and to cut access later revoke the token on GitHub.</p>
+        <p class="muted" style="font-size:13px">${worker
+          ? 'Makes a link that names the login server and who they are. They open it, type their passcode, and they\'re in. Send the passcode separately.'
+          : 'Makes a link that carries <b>this device\'s GitHub token</b> and signs them in as the DM you pick. They open it once on their device and they\'re in: no GitHub account or token of their own. Send it privately (not in a group chat), and to cut access later revoke the token on GitHub.'}</p>
         <div class="row"><select id="st-invite-user">${otherDMs.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select>
-          <button class="btn" id="st-invite" ${setup.hasToken && otherDMs.length ? '' : 'disabled'}>${ic('link')} Copy invite link</button></div>
+          <button class="btn" id="st-invite" ${(worker || setup.hasToken) && otherDMs.length ? '' : 'disabled'}>${ic('link')} Copy invite link</button></div>
         <div class="muted" id="st-invite-out" style="font-size:12px;word-break:break-all;margin-top:6px;min-height:1em"></div>
+        <hr style="border:none;border-top:1px solid var(--line);margin:14px 0 10px">
+        <button class="btn danger" id="st-forget">Forget everything on this device</button>
       </div>
       <div class="card">
         <h3>Shortcuts</h3>
@@ -327,10 +346,12 @@ async function renderSettings(c) {
       </div>
     </div>`;
   $('#st-ai-save').onclick = () => {
-    const k = $('#st-aikey').value.trim(); if (k) localStorage.setItem('gc_ai_key', k);
+    const k = $('#st-aikey') ? $('#st-aikey').value.trim() : ''; if (k) localStorage.setItem('gc_ai_key', k);
     localStorage.setItem('gc_ai_model', $('#st-model').value); localStorage.setItem('gc_ai_effort', $('#st-effort').value);
     toast('Assistant settings saved'); render();
   };
+  $('#st-worker-save').onclick = async () => { await api('/api/worker', { method: 'POST', body: { url: $('#st-worker').value } }); location.reload(); };
+  if ($('#st-worker-off')) $('#st-worker-off').onclick = async () => { await api('/api/worker', { method: 'POST', body: { url: '' } }); location.reload(); };
   $('#st-gh-save').onclick = async () => {
     await api('/api/repo', { method: 'POST', body: { owner: $('#st-owner').value, repo: $('#st-repo').value, branch: $('#st-branch').value } });
     const t = $('#st-ghtoken').value.trim(); if (t) await api('/api/token', { method: 'POST', body: { token: t } });
@@ -338,10 +359,12 @@ async function renderSettings(c) {
   };
   $('#st-invite').onclick = async () => {
     const id = $('#st-invite-user').value;
-    const link = `${location.origin}${location.pathname}#token=${encodeURIComponent(TOKEN)}&user=${encodeURIComponent(id)}`;
+    const link = worker
+      ? `${location.origin}${location.pathname}#worker=${encodeURIComponent(setup.worker)}&user=${encodeURIComponent(id)}`
+      : `${location.origin}${location.pathname}#token=${encodeURIComponent(TOKEN)}&user=${encodeURIComponent(id)}`;
     const out = $('#st-invite-out');
-    try { await navigator.clipboard.writeText(link); out.textContent = `Copied. It signs in as ${$('#st-invite-user').selectedOptions[0].textContent} and carries your token: send it privately.`; toast('Invite link copied'); }
+    try { await navigator.clipboard.writeText(link); out.textContent = worker ? `Copied. It opens the passcode login for ${$('#st-invite-user').selectedOptions[0].textContent}; send their passcode separately.` : `Copied. It signs in as ${$('#st-invite-user').selectedOptions[0].textContent} and carries your token: send it privately.`; toast('Invite link copied'); }
     catch (_) { out.textContent = link; toast('Clipboard blocked: copy the link below', 4000); }
   };
-  $('#st-forget').onclick = () => { if (!confirm('Remove the GitHub token, API key and session from this browser?')) return; ['gc_gh_token', 'gc_gh_repo', 'gc_ai_key', 'gc_ai_model', 'gc_ai_effort', 'gc_session', 'gc_user'].forEach(k => localStorage.removeItem(k)); location.reload(); };
+  $('#st-forget').onclick = () => { if (!confirm('Remove the GitHub token, API key, login server and session from this browser?')) return; ['gc_gh_token', 'gc_gh_repo', 'gc_ai_key', 'gc_ai_model', 'gc_ai_effort', 'gc_session', 'gc_user', 'gc_worker', 'gc_wsession', 'gc_wassistant', 'gc_pin'].forEach(k => localStorage.removeItem(k)); location.reload(); };
 }

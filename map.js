@@ -221,10 +221,11 @@ async function openRoom(planId, roomId) {
   const patch = async (body, label) => {
     $('#room-status').textContent = 'Saving…';
     try { await api(`/api/plans/${planId}`, { method: 'PATCH', body }); $('#room-status').textContent = label || 'Saved ✓'; }
-    catch (e) { $('#room-status').textContent = 'Not saved: ' + e.message; return; }
+    catch (e) { $('#room-status').textContent = 'Not saved: ' + e.message; return false; }
     stylePlan(MS.svg, (await load('plans'))[planId]);
+    return true;
   };
-  $('#room-party').onclick = async () => { await patch({ party: r.id, rooms: { [r.id]: { explored: true } } }, '🐐 Party moved'); openRoom(planId, roomId); };
+  $('#room-party').onclick = async () => { if (await patch({ party: r.id, rooms: { [r.id]: { explored: true } } }, '🐐 Party moved')) openRoom(planId, roomId); };
   $('#room-explored').onchange = e => patch({ rooms: { [r.id]: { explored: e.target.checked } } });
   let t = null;
   const debounced = () => { clearTimeout(t); $('#room-status').textContent = 'Typing…'; t = setTimeout(() => patch({ rooms: { [r.id]: { name: $('#room-name').value.trim() || r.name, desc: $('#room-desc').value, notes: $('#room-notes').value } } }), 900); };
