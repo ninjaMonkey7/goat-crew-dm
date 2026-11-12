@@ -39,19 +39,24 @@ git push -u origin main
 5. Generate, copy the `github_pat_…` string. Paste it on the site's login screen, pick your name, Enter.
 
 ### 3. Let your co-DM in
-**Easiest: an invite link.** On your device → ⚙ Settings → *Invite your co-DM* → pick Co-DM → **Copy invite link**.
-Send it privately (a direct message, not a group chat). They open it once and they're in: no GitHub account,
-no token of their own. The link carries *your* token, so to cut access later revoke that token on GitHub
-(Settings → Developer settings → Fine-grained tokens) and make a new one for yourself.
+**Best: the login server.** A free Cloudflare Worker (`worker/README.md` in the private repo, about 15 minutes)
+holds the GitHub token and the Anthropic key, and each DM logs in with a passcode. No browser ever holds a
+secret. Once it's up, put its URL in `site/config.js` (or under ⚙ Settings → *Login server* on each device);
+the login screen switches to *who are you + passcode*, and ⚙ Settings → *Invite your co-DM* makes a link
+that only names the server. Send them that link and their passcode separately.
 
-**Alternative: their own token.** Private repo `goat-crew-campaign-app` → **Settings → Collaborators → Add
-people** → their GitHub username. They accept, make their own token (step 2), open the site and pick **Co-DM**.
-Commits are then attributed to their GitHub account.
+**Quick alternative: an invite link with your token.** Without a login server, ⚙ Settings → *Invite your co-DM*
+→ **Copy invite link** makes a link that carries *your* token and signs them in as Co-DM. Send it privately
+(a direct message, not a group chat). To cut access later revoke that token on GitHub (Settings → Developer
+settings → Fine-grained tokens) and make a new one for yourself.
+
+**Or their own token.** Private repo `goat-crew-campaign-app` → **Settings → Collaborators → Add people** →
+their GitHub username. They accept, make their own token (step 2), open the site and pick **Co-DM**.
 
 ### 4. Turn on the assistant
 1. console.anthropic.com → **API keys → Create key**. Copy it.
-2. On the site: **⚙ Settings → Assistant → API key → Save.** Each DM pastes a key into their own browser
-   (one shared key is fine too).
+2. With the login server: add it as `ANTHROPIC_API_KEY` on the worker, and every DM has the assistant.
+   Without one: **⚙ Settings → Assistant → API key → Save** in each DM's browser.
 
 ## At the table
 
@@ -72,7 +77,9 @@ The green ● in the header means the screen is polling the data branch. Red: ch
 - `gh.js` is the data layer. It reads `data/*.json` from the data branch through the GitHub REST API,
   polls the branch head (cheap conditional requests) and writes each change back as a commit with the
   file's blob SHA, so two DMs saving the same file at once can't clobber each other (the second save
-  re-reads and re-applies).
+  re-reads and re-applies). With a login server configured, the same calls go through the server
+  (`/gh/*`, `/ai/messages`) with a signed session instead of a token; each commit is authored as the DM
+  who saved.
 - `media/` (maps, portraits) is fetched with the token and shown from memory, so images never leave the
   private repo.
 - `app.js` is the original campaign-app UI; `map.js`, `chat.js`, `bestiary.js`, `dm.css` are the DM-screen additions.

@@ -19,15 +19,25 @@
     <div class="login-box">
       <h1>🐐 The Goat Crew</h1>
       <p class="muted">DM screen — Kingdom of Mathar</p>
-      <label>GitHub token <span class="muted">(fine-grained · Contents: read &amp; write on the data repo)</span></label>
-      <input id="login-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+      <div id="login-direct">
+        <label>GitHub token <span class="muted">(fine-grained · Contents: read &amp; write on the data repo)</span></label>
+        <input id="login-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+      </div>
       <label>Who are you?</label>
       <select id="login-user"><option value="">— paste your token first —</option></select>
+      <div id="login-worker" class="hidden">
+        <label>Passcode</label>
+        <input id="login-pass" type="password" autocomplete="current-password" placeholder="goat-…">
+      </div>
       <button id="login-btn" class="btn primary">Enter the Grumpy Goat</button>
       <p id="login-err" class="err"></p>
-      <details class="collapse"><summary class="muted" style="font-size:13px;font-weight:400">Data repo settings</summary>
+      <p id="login-mode" class="muted" style="font-size:12px;margin:0"></p>
+      <details class="collapse"><summary class="muted" style="font-size:13px;font-weight:400">Connection settings</summary>
+        <label class="muted" style="font-size:12px">Login server (leave empty to use a GitHub token in this browser)</label>
+        <input id="login-worker-url" placeholder="https://goat-crew-dm.….workers.dev" spellcheck="false">
+        <label class="muted" style="font-size:12px">Data repo</label>
         <div class="row"><input id="login-owner" placeholder="owner" style="flex:1;min-width:0"><input id="login-repo" placeholder="repo" style="flex:1;min-width:0"><input id="login-branch" placeholder="branch" style="width:90px"></div>
-        <p class="muted" style="font-size:12px;margin:6px 0 0">The private repo + branch that holds the campaign data. The token is stored only in this browser.</p>
+        <p class="muted" style="font-size:12px;margin:6px 0 0">Settings are stored only in this browser.</p>
       </details>
     </div>
   </div>
@@ -70,6 +80,7 @@
 </div>
 <div id="toasts" aria-live="polite"></div>
 <script src="vendor/leaflet/leaflet.js"></script>
+<script src="config.js"></script>
 <script src="gh.js"></script>
 <script src="icons.js"></script>
 <script src="bestiary.js"></script>

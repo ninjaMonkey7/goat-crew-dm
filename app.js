@@ -88,35 +88,45 @@ async function showLogin() {
   $('#login').classList.remove('hidden');
   $('#login-err').textContent = '';
   const setup = await api('/api/setup');
+  const worker = setup.mode === 'worker';
+  $('#login-direct').classList.toggle('hidden', worker);
+  $('#login-worker').classList.toggle('hidden', !worker);
   $('#login-owner').value = setup.owner; $('#login-repo').value = setup.repo; $('#login-branch').value = setup.branch;
-  $('#login-token').value = '';
+  $('#login-worker-url').value = setup.worker || '';
+  $('#login-token').value = ''; $('#login-pass').value = '';
   $('#login-token').placeholder = setup.hasToken ? 'Token saved on this device — leave blank to keep it' : 'github_pat_…';
+  $('#login-mode').textContent = worker ? `Logging in through ${setup.worker}` : '';
   await loadLoginUsers();
 }
 async function loadLoginUsers() {
   const sel = $('#login-user');
+  const setup = await api('/api/setup');
   const typed = $('#login-token').value.trim();
-  if (!typed && !(await api('/api/setup')).hasToken) { sel.innerHTML = '<option value="">— paste your token first —</option>'; return; }
-  sel.innerHTML = '<option value="">checking token…</option>';
+  if (setup.mode !== 'worker' && !typed && !setup.hasToken) { sel.innerHTML = '<option value="">— paste your token first —</option>'; return; }
+  sel.innerHTML = '<option value="">checking…</option>';
   try {
-    await api('/api/repo', { method: 'POST', body: { owner: $('#login-owner').value, repo: $('#login-repo').value, branch: $('#login-branch').value } });
-    if (typed) await api('/api/token', { method: 'POST', body: { token: typed } });
+    if (setup.mode !== 'worker') {
+      await api('/api/repo', { method: 'POST', body: { owner: $('#login-owner').value, repo: $('#login-repo').value, branch: $('#login-branch').value } });
+      if (typed) await api('/api/token', { method: 'POST', body: { token: typed } });
+    }
     const users = (await api('/api/users/list')).filter(u => u.role === 'dm');
-    sel.innerHTML = users.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('');
+    sel.innerHTML = users.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('') || '<option value="">— no DM logins set up —</option>';
     const saved = localStorage.getItem('gc_user');
     if (saved && users.some(u => u.id === saved)) sel.value = saved;
     $('#login-err').textContent = '';
-  } catch (e) { sel.innerHTML = '<option value="">— token rejected —</option>'; $('#login-err').textContent = e.message || 'Token rejected'; }
+  } catch (e) { sel.innerHTML = `<option value="">— ${setup.mode === 'worker' ? 'login server unreachable' : 'token rejected'} —</option>`; $('#login-err').textContent = e.message || 'Could not load the DM list'; }
 }
 $('#login-btn').onclick = doLogin;
 $('#login-token').addEventListener('change', loadLoginUsers);
 $('#login-token').addEventListener('keydown', e => { if (e.key === 'Enter') loadLoginUsers(); });
+$('#login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+$('#login-worker-url').addEventListener('change', async e => { await api('/api/worker', { method: 'POST', body: { url: e.target.value } }); showLogin(); });
 async function doLogin() {
   $('#login-err').textContent = '';
   try {
     if (!$('#login-user').value) await loadLoginUsers();
     if (!$('#login-user').value) return;
-    await api('/api/login', { method: 'POST', body: { userId: $('#login-user').value, token: $('#login-token').value } });
+    await api('/api/login', { method: 'POST', body: { userId: $('#login-user').value, token: $('#login-token').value, passcode: $('#login-pass').value } });
     localStorage.setItem('gc_user', $('#login-user').value);
     S.me = await api('/api/me');
     showMain();

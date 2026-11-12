@@ -6,18 +6,24 @@
 
 const GH = { owner: 'ninjaMonkey7', repo: 'goat-crew-campaign-app', branch: 'data', base: 'https://api.github.com', pollMs: 4000 };
 (() => { try { Object.assign(GH, JSON.parse(localStorage.getItem('gc_gh_repo') || '{}')); } catch (_) { /* ignore */ } })();
-// Invite link: index.html#token=…&user=codm stores the token, signs in as that DM, then scrubs the URL.
+// Invite link: index.html#token=…&user=codm (token mode) or #worker=https://…&user=codm (login server).
 (() => {
   try {
     const h = new URLSearchParams(location.hash.replace(/^#/, ''));
-    const t = (h.get('token') || '').trim(), u = (h.get('user') || '').trim();
-    if (!t && !u) return;
+    const t = (h.get('token') || '').trim(), u = (h.get('user') || '').trim(), w = (h.get('worker') || '').trim();
+    if (!t && !u && !w) return;
+    if (w) { localStorage.setItem('gc_worker', w.replace(/\/+$/, '')); localStorage.removeItem('gc_wsession'); }
     if (t) localStorage.setItem('gc_gh_token', t);
-    if (u) { localStorage.setItem('gc_user', u); localStorage.setItem('gc_session', u); }
+    if (u) { localStorage.setItem('gc_user', u); if (t) localStorage.setItem('gc_session', u); }
     history.replaceState(null, '', location.pathname + location.search);
   } catch (_) { /* ignore */ }
 })();
 let TOKEN = localStorage.getItem('gc_gh_token') || '';
+// Login server (Cloudflare Worker) mode: it holds the GitHub token and the Anthropic key; we hold a signed session.
+const CFG = (typeof window !== 'undefined' && window.GC_CONFIG) || {};
+let WORKER = (localStorage.getItem('gc_worker') || CFG.worker || '').replace(/\/+$/, '');
+let WSESSION = localStorage.getItem('gc_wsession') || '';
+const workerMode = () => !!WORKER;
 
 const FILES = {
   users: 'data/users.json', characters: 'data/characters.json', journal: 'data/journal.json', codex: 'data/codex.json',
@@ -50,15 +56,30 @@ function b64decode(b64) {
 function fail(code, msg) { const e = new Error(msg); e.code = code; if (typeof toast === 'function' && msg !== 'Not logged in') toast(msg, 3500); throw e; }
 async function gh(path, opts = {}) {
   const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(opts.headers || {}) };
-  if (TOKEN) headers.Authorization = 'Bearer ' + TOKEN;
+  if (workerMode()) { if (WSESSION) headers.Authorization = 'Bearer ' + WSESSION; }
+  else if (TOKEN) headers.Authorization = 'Bearer ' + TOKEN;
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
-  return fetch(GH.base + path, { method: opts.method || 'GET', headers, cache: 'no-store', body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+  const base = workerMode() ? WORKER + '/gh' : GH.base;
+  return fetch(base + path, { method: opts.method || 'GET', headers, cache: 'no-store', body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+}
+async function workerCall(path, opts = {}) {
+  const headers = { Accept: 'application/json', ...(opts.headers || {}) };
+  if (WSESSION) headers.Authorization = 'Bearer ' + WSESSION;
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
+  let r;
+  try { r = await fetch(WORKER + path, { method: opts.method || 'GET', headers, cache: 'no-store', body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined }); }
+  catch (e) { fail(0, `Cannot reach the login server at ${WORKER}`); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) fail(r.status, j.message || `Login server error ${r.status}`);
+  return j;
 }
 const repoPath = p => `/repos/${encodeURIComponent(GH.owner)}/${encodeURIComponent(GH.repo)}/${p}`;
 const encPath = p => p.split('/').map(encodeURIComponent).join('/');
 const refPath = () => repoPath(`git/ref/heads/${encodeURIComponent(GH.branch)}`);
 function explain(status, what) {
+  if (status === 401 && workerMode()) return 'Your session has expired. Log out and log in again with your passcode.';
   if (status === 401) return 'GitHub rejected the token. Paste a fine-grained token with Contents: read & write on the data repo.';
+  if (status === 403 && workerMode()) return 'GitHub refused the login server\'s token (403): check GITHUB_TOKEN on the worker, or the rate limit is spent.';
   if (status === 403) return 'GitHub refused (403): the token has no access to the data repo, or the rate limit is spent.';
   if (status === 404) return `Not found on GitHub: ${what}. Check the repo/branch in Settings and that the token can see this private repo.`;
   return `GitHub error ${status} (${what})`;
@@ -82,6 +103,7 @@ async function save(name, mutate, message) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const next = mutate(structuredClone(RAW[name] ?? defaults(name)));
     const body = { message: message || `${ME ? ME.name : 'app'}: update ${name}`, content: b64encode(JSON.stringify(next, null, 1) + '\n'), branch: GH.branch };
+    if (ME) body.author = { name: ME.name, email: `${ME.id}@goat-crew.local` }; // git history shows which DM saved
     if (SHA[path]) body.sha = SHA[path];
     const r = await gh(repoPath(`contents/${encPath(path)}`), { method: 'PUT', body });
     if (r.ok) {
@@ -238,7 +260,7 @@ function logHistory(user, entity, entityId, field, oldVal, newVal) {
 // ---------- session ----------
 async function requireMe() {
   if (ME) return ME;
-  if (!TOKEN) fail(401, 'Not logged in');
+  if (workerMode() ? !WSESSION : !TOKEN) fail(401, 'Not logged in');
   const id = localStorage.getItem('gc_session');
   if (!id) fail(401, 'Not logged in');
   const users = RAW.users || await readFile('users');
@@ -269,22 +291,35 @@ async function route(path, method, body) {
     localStorage.setItem('gc_gh_repo', JSON.stringify({ owner: GH.owner, repo: GH.repo, branch: GH.branch }));
     return { ok: true };
   }
+  if (path === '/api/worker' && method === 'POST') {
+    WORKER = String(body.url || '').trim().replace(/\/+$/, '');
+    if (WORKER) localStorage.setItem('gc_worker', WORKER); else localStorage.removeItem('gc_worker');
+    WSESSION = ''; localStorage.removeItem('gc_wsession'); localStorage.removeItem('gc_session'); ME = null; loaded = null;
+    return { ok: true, mode: workerMode() ? 'worker' : 'direct' };
+  }
   if (path === '/api/users/list') {
+    if (workerMode() && !WSESSION) return workerCall('/users'); // names only, no session needed
     const users = RAW.users || await readFile('users');
     return [...users].sort((a, b) => (a.role === 'dm' ? 0 : 1) - (b.role === 'dm' ? 0 : 1) || (a.order ?? 0) - (b.order ?? 0)).map(u => ({ id: u.id, name: u.name, role: u.role }));
   }
   if (path === '/api/login' && method === 'POST') {
-    if (body.token && String(body.token).trim()) { TOKEN = String(body.token).trim(); localStorage.setItem('gc_gh_token', TOKEN); loaded = null; }
-    if (!TOKEN) fail(401, 'Paste your GitHub token first');
+    if (workerMode()) {
+      const res = await workerCall('/login', { method: 'POST', body: { user: body.userId, passcode: body.passcode } });
+      WSESSION = res.token; localStorage.setItem('gc_wsession', WSESSION); localStorage.setItem('gc_wassistant', res.assistant ? '1' : '');
+      loaded = null;
+    } else {
+      if (body.token && String(body.token).trim()) { TOKEN = String(body.token).trim(); localStorage.setItem('gc_gh_token', TOKEN); loaded = null; }
+      if (!TOKEN) fail(401, 'Paste your GitHub token first');
+    }
     const users = await readFile('users');
     const u = users.find(x => x.id === body.userId);
     if (!u) fail(401, 'Pick who you are');
     localStorage.setItem('gc_session', u.id); ME = u;
     return { ok: true };
   }
-  if (path === '/api/logout' && method === 'POST') { localStorage.removeItem('gc_session'); ME = null; return { ok: true }; }
+  if (path === '/api/logout' && method === 'POST') { localStorage.removeItem('gc_session'); if (workerMode()) { WSESSION = ''; localStorage.removeItem('gc_wsession'); } ME = null; return { ok: true }; }
   if (path === '/api/me') { const u = await requireMe(); return { id: u.id, name: u.name, role: u.role, characterId: u.characterId }; }
-  if (path === '/api/setup') return { owner: GH.owner, repo: GH.repo, branch: GH.branch, hasToken: !!TOKEN };
+  if (path === '/api/setup') return { owner: GH.owner, repo: GH.repo, branch: GH.branch, hasToken: !!TOKEN, mode: workerMode() ? 'worker' : 'direct', worker: WORKER, workerFromConfig: !!CFG.worker && !localStorage.getItem('gc_worker'), hasSession: !!WSESSION, assistantOnServer: localStorage.getItem('gc_wassistant') === '1' };
 
   const user = await requireMe();
   const isDM = user.role === 'dm';
