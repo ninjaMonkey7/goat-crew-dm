@@ -286,6 +286,7 @@ ${tracker}`;
 // ---------- settings ----------
 async function renderSettings(c) {
   const setup = await api('/api/setup');
+  const otherDMs = (await api('/api/users/list')).filter(u => u.role === 'dm' && u.id !== S.me.id);
   c.innerHTML = `
     <h2>${ic('settings')} Settings <span class="muted" style="font-size:14px;font-weight:400">— stored only in this browser</span></h2>
     <div class="settings-grid">
@@ -309,6 +310,12 @@ async function renderSettings(c) {
         <p class="muted" style="font-size:13px">Fine-grained token: github.com → Settings → Developer settings → Fine-grained tokens → only the data repo → Repository permissions → Contents: Read and write.</p>
         <button class="btn primary" id="st-gh-save">Save & reload</button>
         <button class="btn danger" id="st-forget">Forget everything on this device</button>
+        <hr style="border:none;border-top:1px solid var(--line);margin:14px 0 10px">
+        <h3>${ic('users')} Invite your co-DM</h3>
+        <p class="muted" style="font-size:13px">Makes a link that carries <b>this device's GitHub token</b> and signs them in as the DM you pick. They open it once on their device and they're in: no GitHub account or token of their own. Send it privately (not in a group chat), and to cut access later revoke the token on GitHub.</p>
+        <div class="row"><select id="st-invite-user">${otherDMs.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select>
+          <button class="btn" id="st-invite" ${setup.hasToken && otherDMs.length ? '' : 'disabled'}>${ic('link')} Copy invite link</button></div>
+        <div class="muted" id="st-invite-out" style="font-size:12px;word-break:break-all;margin-top:6px;min-height:1em"></div>
       </div>
       <div class="card">
         <h3>Shortcuts</h3>
@@ -328,6 +335,13 @@ async function renderSettings(c) {
     await api('/api/repo', { method: 'POST', body: { owner: $('#st-owner').value, repo: $('#st-repo').value, branch: $('#st-branch').value } });
     const t = $('#st-ghtoken').value.trim(); if (t) await api('/api/token', { method: 'POST', body: { token: t } });
     location.reload();
+  };
+  $('#st-invite').onclick = async () => {
+    const id = $('#st-invite-user').value;
+    const link = `${location.origin}${location.pathname}#token=${encodeURIComponent(TOKEN)}&user=${encodeURIComponent(id)}`;
+    const out = $('#st-invite-out');
+    try { await navigator.clipboard.writeText(link); out.textContent = `Copied. It signs in as ${$('#st-invite-user').selectedOptions[0].textContent} and carries your token: send it privately.`; toast('Invite link copied'); }
+    catch (_) { out.textContent = link; toast('Clipboard blocked: copy the link below', 4000); }
   };
   $('#st-forget').onclick = () => { if (!confirm('Remove the GitHub token, API key and session from this browser?')) return; ['gc_gh_token', 'gc_gh_repo', 'gc_ai_key', 'gc_ai_model', 'gc_ai_effort', 'gc_session', 'gc_user'].forEach(k => localStorage.removeItem(k)); location.reload(); };
 }

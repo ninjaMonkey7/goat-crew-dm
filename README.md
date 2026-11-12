@@ -39,8 +39,14 @@ git push -u origin main
 5. Generate, copy the `github_pat_…` string. Paste it on the site's login screen, pick your name, Enter.
 
 ### 3. Let your co-DM in
-1. Private repo `goat-crew-campaign-app` → **Settings → Collaborators → Add people** → their GitHub username.
-2. They accept the invite, make their own token (step 2), open the site and pick **Co-DM**.
+**Easiest: an invite link.** On your device → ⚙ Settings → *Invite your co-DM* → pick Co-DM → **Copy invite link**.
+Send it privately (a direct message, not a group chat). They open it once and they're in: no GitHub account,
+no token of their own. The link carries *your* token, so to cut access later revoke that token on GitHub
+(Settings → Developer settings → Fine-grained tokens) and make a new one for yourself.
+
+**Alternative: their own token.** Private repo `goat-crew-campaign-app` → **Settings → Collaborators → Add
+people** → their GitHub username. They accept, make their own token (step 2), open the site and pick **Co-DM**.
+Commits are then attributed to their GitHub account.
 
 ### 4. Turn on the assistant
 1. console.anthropic.com → **API keys → Create key**. Copy it.
