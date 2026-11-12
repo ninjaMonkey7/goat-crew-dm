@@ -6,6 +6,17 @@
 
 const GH = { owner: 'ninjaMonkey7', repo: 'goat-crew-campaign-app', branch: 'data', base: 'https://api.github.com', pollMs: 4000 };
 (() => { try { Object.assign(GH, JSON.parse(localStorage.getItem('gc_gh_repo') || '{}')); } catch (_) { /* ignore */ } })();
+// Invite link: index.html#token=…&user=codm stores the token, signs in as that DM, then scrubs the URL.
+(() => {
+  try {
+    const h = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const t = (h.get('token') || '').trim(), u = (h.get('user') || '').trim();
+    if (!t && !u) return;
+    if (t) localStorage.setItem('gc_gh_token', t);
+    if (u) { localStorage.setItem('gc_user', u); localStorage.setItem('gc_session', u); }
+    history.replaceState(null, '', location.pathname + location.search);
+  } catch (_) { /* ignore */ }
+})();
 let TOKEN = localStorage.getItem('gc_gh_token') || '';
 
 const FILES = {
