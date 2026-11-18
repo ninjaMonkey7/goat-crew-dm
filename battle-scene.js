@@ -524,8 +524,9 @@ class BattleView {
   }
   setEncounter(enc) {
     this.enc = enc;
-    const c = enc && (enc.combatants || [])[enc.turn || 0];
-    this.turnId = c && c.id || null;
+    const c = enc && (enc.combatants || [])[enc.turn || 0], id = c && c.id || null;
+    if (id !== this.turnId) { this.turnSince = performance.now(); clearTimeout(this._glowT); this._glowT = setTimeout(() => this.request(), 8050); } // last frame: the glow at rest
+    this.turnId = id;
     this.request();
   }
   setChars(chars) { this.chars = chars || []; this.request(); }
@@ -724,12 +725,14 @@ class BattleView {
       const lift = e.dragging ? 1.12 : 1;
       ctx.drawImage(bsShadow(), X - R * 1.3, Y - R * 1.3 + R * 0.16 * lift, R * 2.6, R * 2.6 * lift);
       if (info.turn && !info.down) {
-        const pulse = 0.5 + 0.5 * Math.sin(now / 420);
+        // pulse for a few seconds when the turn arrives, then hold still (no redraws while idle)
+        const live = now - (this.turnSince || 0) < 8000;
+        const pulse = live ? 0.5 + 0.5 * Math.sin(now / 420) : 0.6;
         ctx.save(); ctx.shadowColor = 'rgba(242,193,94,.95)'; ctx.shadowBlur = R * (0.5 + 0.35 * pulse) + 6;
         ctx.beginPath(); ctx.arc(X, Y, R, 0, BS_TAU); ctx.fillStyle = '#f2c15e'; ctx.fill(); ctx.restore();
         ctx.save(); ctx.beginPath(); ctx.arc(X, Y, R + Math.max(5, R * 0.16), 0, BS_TAU); ctx.setLineDash([Math.max(4, R * 0.22), Math.max(3, R * 0.14)]);
-        ctx.lineDashOffset = -now / 60; ctx.lineWidth = Math.max(1.5, R * 0.05); ctx.strokeStyle = 'rgba(242,193,94,.9)'; ctx.stroke(); ctx.restore();
-        anim = true;
+        ctx.lineDashOffset = live ? -now / 60 : 0; ctx.lineWidth = Math.max(1.5, R * 0.05); ctx.strokeStyle = 'rgba(242,193,94,.9)'; ctx.stroke(); ctx.restore();
+        if (live) anim = true;
       }
       const px = bsBucket(R * 2 * dpr);
       const sp = bsSprite(info, px, this._redraw);

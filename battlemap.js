@@ -664,6 +664,7 @@ function bmTrayDrag(e, btn, item) {
   const up = ev => {
     btn.removeEventListener('pointermove', move); btn.removeEventListener('pointerup', up); btn.removeEventListener('pointercancel', up);
     btn.classList.remove('dragging');
+    if (ev.type === 'pointercancel') { if (ghost) ghost.remove(); return; }
     if (!ghost) { bmPlace(item, null); return; }
     ghost.remove();
     const r = BM.stage.getBoundingClientRect(), over = document.elementFromPoint(ev.clientX, ev.clientY);
@@ -915,37 +916,44 @@ async function bmCreateFromFile(file, name) {
 
 function bmOpenGrid() {
   const sc = bmScene(); if (!sc) return;
-  BM.gridBefore = bmClone(sc.grid);
-  const g = sc.grid, { w } = bsSceneSize(sc), rule = bmPref('rule', '5');
+  BM.gridBefore = bmClone(sc.grid); BM.gridSid = sc.id;
+  const g = sc.grid, { w } = bsSceneSize(sc), rule = bmPref('rule', '5'), img = !!sc.bg; // a blank scene's grid is its floor: no resizing
+  const geo = html => (img ? html : '');
   const p = bmOpenPop('grid', `<div class="bm-pop-head"><b>${ic('grid')} Grid & scale</b><button class="bm-ib" id="bm-g-x" aria-label="Close">${ic('x')}</button></div>
     <label class="bm-switch"><input type="checkbox" id="bm-g-show" ${g.show ? 'checked' : ''}><span></span> Show grid</label>
-    <div class="bm-slider"><label>Square</label><input type="range" id="bm-g-size" min="16" max="300" step="1" value="${Math.round(g.size)}"><input type="number" id="bm-g-size-n" value="${Math.round(g.size * 10) / 10}" step="0.5"><span>px</span></div>
+    ${geo(`<div class="bm-slider"><label>Square</label><input type="range" id="bm-g-size" min="16" max="300" step="1" value="${Math.round(g.size)}"><input type="number" id="bm-g-size-n" value="${Math.round(g.size * 10) / 10}" step="0.5"><span>px</span></div>
     <div class="bm-slider"><label>Offset X</label><input type="range" id="bm-g-ox" min="0" max="${Math.round(g.size)}" step="0.5" value="${((g.offsetX % g.size) + g.size) % g.size}"><input type="number" id="bm-g-ox-n" value="${Math.round((((g.offsetX % g.size) + g.size) % g.size) * 10) / 10}" step="0.5"></div>
-    <div class="bm-slider"><label>Offset Y</label><input type="range" id="bm-g-oy" min="0" max="${Math.round(g.size)}" step="0.5" value="${((g.offsetY % g.size) + g.size) % g.size}"><input type="number" id="bm-g-oy-n" value="${Math.round((((g.offsetY % g.size) + g.size) % g.size) * 10) / 10}" step="0.5"></div>
+    <div class="bm-slider"><label>Offset Y</label><input type="range" id="bm-g-oy" min="0" max="${Math.round(g.size)}" step="0.5" value="${((g.offsetY % g.size) + g.size) % g.size}"><input type="number" id="bm-g-oy-n" value="${Math.round((((g.offsetY % g.size) + g.size) % g.size) * 10) / 10}" step="0.5"></div>`)}
     <div class="bm-slider"><label>Opacity</label><input type="range" id="bm-g-op" min="0" max="1" step="0.05" value="${g.opacity}"><span class="bm-val">${Math.round(g.opacity * 100)}%</span></div>
-    <button class="btn small bm-wide" id="bm-g-cal">${ic('scan')} Calibrate: drag across one square</button>
-    <div class="bm-row bm-g-across"><span>Map is</span><input type="number" id="bm-g-across" min="2" max="200" value="${Math.round(w / g.size * 10) / 10}" step="0.5"><span>squares wide</span></div>
+    ${geo(`<button class="btn small bm-wide" id="bm-g-cal">${ic('scan')} Calibrate: drag across one square</button>
+    <div class="bm-row bm-g-across"><span>Map is</span><input type="number" id="bm-g-across" min="2" max="200" value="${Math.round(w / g.size * 10) / 10}" step="0.5"><span>squares wide</span></div>`)}
     <label>Diagonals</label>${bmSeg('grule', [['5', '5 ft each'], ['alt', '5 / 10 ft'], ['euclid', 'True']], rule)}
-    <p class="bm-note">1 square = 5 ft. Changes preview live and save when you close this panel.</p>`, 'bm-pop-grid');
-  const live = patch => { const s = bmScene(); Object.assign(s.grid, patch); BM.view.setScene(s); bmRenderZoom(); bmPostDoc(); clearTimeout(BM.gridT); BM.gridT = setTimeout(bmCommitGrid, 1200); };
+    <p class="bm-note">1 square = 5 ft.${img ? '' : ' A blank scene is sized in squares, so only the look of its grid changes here.'} Changes show live, on the TV too.</p>`, 'bm-pop-grid');
+  // live edits go through the save queue (they survive the other DM's updates); one undo step when the panel closes
+  const sid = sc.id, live = patch => {
+    const cur = bmScene(sid); if (!cur) return;
+    const next = { ...cur.grid, ...patch };
+    bmQueue(doc => { const s2 = doc.scenes.find(x => x.id === sid); if (s2) s2.grid = bmClone(next); }, 'Grid');
+    bmChanged(); bmRenderZoom();
+  };
   const pair = (r, n, key) => {
-    const R = p.querySelector(r), N = p.querySelector(n);
+    const R = p.querySelector(r), N = p.querySelector(n); if (!R) return;
     R.oninput = () => { N.value = R.value; live({ [key]: Number(R.value) }); if (key === 'size') { p.querySelector('#bm-g-ox').max = R.value; p.querySelector('#bm-g-oy').max = R.value; } };
     N.onchange = () => { const v = Number(N.value); if (Number.isFinite(v) && (key !== 'size' || v >= 8)) { R.value = v; live({ [key]: v }); } };
   };
   pair('#bm-g-size', '#bm-g-size-n', 'size'); pair('#bm-g-ox', '#bm-g-ox-n', 'offsetX'); pair('#bm-g-oy', '#bm-g-oy-n', 'offsetY');
   p.querySelector('#bm-g-op').oninput = e => { p.querySelector('.bm-val').textContent = Math.round(e.target.value * 100) + '%'; live({ opacity: Number(e.target.value) }); };
   p.querySelector('#bm-g-show').onchange = e => live({ show: e.target.checked });
-  p.querySelector('#bm-g-across').onchange = e => { const n = Number(e.target.value); if (n >= 2) { const size = Math.round(w / n * 100) / 100; live({ size }); p.querySelector('#bm-g-size').value = size; p.querySelector('#bm-g-size-n').value = size; } };
-  p.querySelector('#bm-g-cal').onclick = () => { bmCommitGrid(); bmClosePop(); bmSetTool('calibrate'); };
+  if (img) p.querySelector('#bm-g-across').onchange = e => { const n = Number(e.target.value); if (n >= 2) { const size = Math.round(w / n * 100) / 100; live({ size }); p.querySelector('#bm-g-size').value = size; p.querySelector('#bm-g-size-n').value = size; } };
+  if (img) p.querySelector('#bm-g-cal').onclick = () => { bmClosePop(); bmSetTool('calibrate'); };
   p.querySelectorAll('[data-grule]').forEach(b => b.onclick = () => { bmSetPref('rule', b.dataset.grule); BM.view.rule = b.dataset.grule; p.querySelectorAll('[data-grule]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); }); });
   p.querySelector('#bm-g-x').onclick = () => bmClosePop();
 }
+// the edits are already queued; this records them as a single undo step
 function bmCommitGrid() {
-  clearTimeout(BM.gridT);
-  const sc = bmScene(), before = BM.gridBefore; if (!sc || !before) return;
-  if (JSON.stringify(before) !== JSON.stringify(sc.grid)) bmCommit('Grid', [{ coll: 'prop', id: 'grid', before, after: bmClone(sc.grid) }]);
-  BM.gridBefore = BM.pop === 'grid' ? bmClone(sc.grid) : null;
+  const sc = bmScene(BM.gridSid), before = BM.gridBefore; BM.gridBefore = null;
+  if (!sc || !before || JSON.stringify(before) === JSON.stringify(sc.grid)) return;
+  BM.undo.push({ label: 'Grid', sid: sc.id, changes: [{ coll: 'prop', id: 'grid', before, after: bmClone(sc.grid) }] }); BM.redo = [];
 }
 function bmOpenDisplayPop() {
   const d = BM.doc.display, sc = bmScene(), live = Date.now() - BM.displaySeen < 7000;
