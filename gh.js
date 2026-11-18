@@ -29,7 +29,8 @@ const FILES = {
   users: 'data/users.json', characters: 'data/characters.json', journal: 'data/journal.json', codex: 'data/codex.json',
   quests: 'data/quests.json', notices: 'data/notices.json', arc: 'data/arc.json', prep: 'data/prep.json',
   encounter: 'data/encounter.json', rolls: 'data/rolls.json', history: 'data/history.json', notes: 'data/notes.json',
-  chat: 'data/chat.json', maps: 'data/maps.json', pins: 'data/pins.json', plans: 'data/plans.json'
+  chat: 'data/chat.json', maps: 'data/maps.json', pins: 'data/pins.json', plans: 'data/plans.json',
+  battle: 'data/battle.json'
 };
 const RAW = {};        // name -> parsed JSON (live cache)
 const SHA = {};        // path -> blob sha (optimistic concurrency for writes)
@@ -37,7 +38,8 @@ const LIVE_HOOKS = {}; // entity -> fn(prev, next): map.js / chat.js update in p
 let ME = null, headSha = null, headEtag = null, pollTimer = null, loaded = null;
 
 const uid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join('');
-const defaults = name => name === 'encounter' ? { round: 1, turn: 0, combatants: [] } : (name === 'notes' || name === 'plans') ? {} : name === 'pins' ? { pins: [], party: {} } : [];
+const defaults = name => name === 'encounter' ? { round: 1, turn: 0, combatants: [] } : (name === 'notes' || name === 'plans') ? {} : name === 'pins' ? { pins: [], party: {} }
+  : name === 'battle' ? { scenes: [], display: { sceneId: null, follow: 'dm', camera: null, showInit: true } } : [];
 
 // ---------- base64 (UTF-8 safe) ----------
 const _enc = new TextEncoder(), _dec = new TextDecoder();
@@ -108,14 +110,23 @@ async function save(name, mutate, message) {
     const r = await gh(repoPath(`contents/${encPath(path)}`), { method: 'PUT', body });
     if (r.ok) {
       const j = await r.json();
-      SHA[path] = j.content.sha; if (j.commit) headSha = j.commit.sha;
+      SHA[path] = j.content.sha; advanceHead(j.commit);
       RAW[name] = next;
+      try { window.dispatchEvent(new CustomEvent('gc-saved', { detail: { name } })); } catch (_) { /* no window (tests) */ }
       return next;
     }
     if (r.status === 409 || r.status === 422) { await readFile(name); continue; }
     fail(r.status, explain(r.status, path));
   }
   fail(409, 'Could not save: the other DM changed the same thing at the same moment. Try again.');
+}
+
+/* Our own commit becomes the known head only if it sits directly on the head we last synced;
+   otherwise the other DM committed in between and the next poll must still fetch their change. */
+function advanceHead(commit) {
+  if (!commit) return;
+  const parent = commit.parents && commit.parents[0] && commit.parents[0].sha;
+  if (parent && parent === headSha) headSha = commit.sha;
 }
 
 // ---------- initial load + polling (replaces SSE / Firestore listeners) ----------
@@ -194,6 +205,41 @@ function media(path) {
   MEDIA[path].catch(() => { delete MEDIA[path]; });
   return MEDIA[path];
 }
+/* uploadMedia(file, dir): put an image into the data branch and return { path, w, h }.
+   Refuses files over 15 MB; anything over maxSide px on its long side (or a heavy/odd format) is
+   downscaled in a canvas and re-encoded as WebP (JPEG where the browser cannot encode WebP). */
+const MEDIA_MAX_BYTES = 15 * 1024 * 1024;
+async function shrinkImage(file, maxSide) {
+  const bmp = await createImageBitmap(file);
+  const w0 = bmp.width, h0 = bmp.height, k = Math.min(1, maxSide / Math.max(w0, h0));
+  const ext0 = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png' }[file.type];
+  if (k === 1 && ext0 && file.size <= 3 * 1024 * 1024) { bmp.close && bmp.close(); return { blob: file, w: w0, h: h0, ext: ext0 }; }
+  const w = Math.max(1, Math.round(w0 * k)), h = Math.max(1, Math.round(h0 * k));
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const cx = cv.getContext('2d'); cx.imageSmoothingQuality = 'high'; cx.drawImage(bmp, 0, 0, w, h); bmp.close && bmp.close();
+  const enc = (type, q) => new Promise(res => cv.toBlob(res, type, q));
+  let blob = await enc('image/webp', 0.86), ext = 'webp';
+  if (!blob || blob.type !== 'image/webp') { blob = await enc('image/jpeg', 0.88); ext = 'jpg'; }
+  return { blob, w, h, ext };
+}
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer()); let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+async function uploadMedia(file, dir = 'media/battle', { maxSide = 4096, message } = {}) {
+  if (!file || !/^image\//.test(file.type || '')) fail(415, 'That file is not an image');
+  if (file.size > MEDIA_MAX_BYTES) fail(413, `That image is ${(file.size / 1048576).toFixed(1)} MB; the limit is 15 MB`);
+  await requireMe();
+  const { blob, w, h, ext } = await shrinkImage(file, maxSide);
+  const path = `${dir}/${uid()}.${ext}`;
+  const body = { message: message || `${ME.name}: upload ${path}`, content: await blobToBase64(blob), branch: GH.branch, author: { name: ME.name, email: `${ME.id}@goat-crew.local` } };
+  const r = await gh(repoPath(`contents/${encPath(path)}`), { method: 'PUT', body });
+  if (!r.ok) fail(r.status, explain(r.status, path));
+  advanceHead((await r.json()).commit);
+  MEDIA[path] = Promise.resolve(URL.createObjectURL(blob)); // no need to download what we just sent
+  return { path, w, h };
+}
 new MutationObserver(() => {
   document.querySelectorAll('img[src^="media/"]:not([data-media])').forEach(img => {
     const p = img.getAttribute('src'); img.dataset.media = p; img.removeAttribute('src');
@@ -212,6 +258,19 @@ function arcView(e, user) { return isDMUser(user) ? { ...e } : null; }
 function encounterView(enc, user) {
   if (isDMUser(user)) return enc;
   return { round: enc.round || 1, turn: enc.turn || 0, combatants: (enc.combatants || []).map(x => ({ name: x.name, init: x.init, characterId: x.characterId || null, down: (Number(x.maxHp) > 0 && Number(x.hp) <= 0) || undefined })) };
+}
+
+/* Battle map tokens link to combatants by id. The Battle and DM tabs save the whole encounter from
+   their own copy, which may predate the ids: carry each id over to the same-named combatant. */
+function keepCombatantIds(next, cur) {
+  const pool = ((cur && cur.combatants) || []).filter(c => c.id);
+  const used = new Set((next.combatants || []).map(c => c.id).filter(Boolean));
+  for (const c of next.combatants || []) {
+    if (c.id) continue;
+    const m = pool.find(x => !used.has(x.id) && x.name === c.name && (x.characterId || null) === (c.characterId || null) && (x.monster || null) === (c.monster || null));
+    if (m) { c.id = m.id; used.add(m.id); }
+  }
+  return next;
 }
 
 // ---------- dice (client-side RNG) ----------
@@ -389,7 +448,7 @@ async function route(path, method, body) {
 
   // --- encounter ---
   if (path === '/api/encounter' && method === 'GET') return encounterView(structuredClone(RAW.encounter || defaults('encounter')), user);
-  if (path === '/api/encounter' && method === 'PUT') { await save('encounter', () => structuredClone(body), `${who}: encounter round ${body.round || 1}`); return { ok: true }; }
+  if (path === '/api/encounter' && method === 'PUT') { await save('encounter', cur => keepCombatantIds(structuredClone(body), cur), `${who}: encounter round ${body.round || 1}`); return { ok: true }; }
 
   // --- dice ---
   if (path === '/api/rolls' && method === 'GET') return [...(RAW.rolls || [])].sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || ''))).slice(-40);
@@ -454,6 +513,7 @@ async function route(path, method, body) {
     await save('users', arr => { Object.assign(arr.find(x => x.id === m[1]) || {}, upd); return arr; }, `${who}: user ${m[1]}`);
     return { ok: true };
   }
+  if (path === '/api/battle' && method === 'GET') return RAW.battle || defaults('battle');
   if (path === '/api/history' && method === 'GET') return [...RAW.history, ...pendingHistory].sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 100);
 
   fail(404, 'Unknown endpoint ' + path);

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Goat Crew — table display</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="display.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐐</text></svg>">
+</head>
+<body>
+<div id="dp">
+  <div class="dp-stage" id="dp-stage"><canvas id="dp-canvas"></canvas></div>
+  <div class="dp-vignette" aria-hidden="true"></div>
+  <div class="dp-init hidden" id="dp-init" aria-live="polite"></div>
+  <div class="dp-title" id="dp-title" aria-live="polite"></div>
+  <div class="dp-msg hidden" id="dp-msg"></div>
+  <button class="dp-fs hidden" id="dp-fs" type="button">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+    <b>Click to go full screen</b><span>Press <kbd>F</kbd> any time to toggle</span>
+  </button>
+  <div class="dp-chip" id="dp-chip"></div>
+</div>
+<script src="config.js"></script>
+<script src="gh.js"></script>
+<script src="battle-scene.js"></script>
+<script src="display.js"></script>
+</body>
+</html>
