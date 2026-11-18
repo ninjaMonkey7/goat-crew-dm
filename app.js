@@ -151,7 +151,7 @@ $$('#tabs .tab').forEach(b => b.onclick = () => {
   render();
 });
 $('#pin-pick').onchange = e => setPin(e.target.value);
-const TAB_ICONS = { map: 'map', chat: 'chat', party: 'users', battle: 'swords', dice: 'dice', journal: 'book', codex: 'scroll', quests: 'flag', board: 'pin', arc: 'route', notes: 'notebook', dm: 'crown', settings: 'settings' };
+const TAB_ICONS = { map: 'map', chat: 'chat', party: 'users', battle: 'swords', battlemap: 'grid', dice: 'dice', journal: 'book', codex: 'scroll', quests: 'flag', board: 'pin', arc: 'route', notes: 'notebook', dm: 'crown', settings: 'settings' };
 $$('#tabs .tab').forEach(b => { const n = TAB_ICONS[b.dataset.tab]; if (n) b.innerHTML = ic(n) + `<span>${esc(b.textContent.trim())}</span>`; });
 // Keyboard: N = next turn when the Battle panel is showing, / = jump to the DM chat box, Esc = close the map side panel / leave a field
 document.addEventListener('keydown', e => {
@@ -179,6 +179,7 @@ async function renderInto(c, tab) {
   try {
     if (tab === 'party') await renderParty(c);
     else if (tab === 'battle') await renderBattle(c);
+    else if (tab === 'battlemap') await renderBattleMap(c);
     else if (tab === 'dice') await renderDice(c);
     else if (tab === 'journal') await renderJournal(c);
     else if (tab === 'codex') await renderCodex(c);
@@ -195,6 +196,7 @@ async function renderInto(c, tab) {
 async function renderOnce() {
   $$('#tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === S.tab));
   document.body.classList.toggle('tab-map', S.tab === 'map');
+  document.body.classList.toggle('tab-battlemap', S.tab === 'battlemap');
   await syncRail(); // if the main tab is the pinned one, empty the rail first so element ids stay unique
   await renderInto($('#content'), S.tab);
   await syncRail();
