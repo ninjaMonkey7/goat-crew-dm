@@ -292,9 +292,12 @@ ${tracker}`;
 // ---------- settings ----------
 async function renderSettings(c) {
   const setup = await api('/api/setup');
-  const otherDMs = (await api('/api/users/list')).filter(u => u.role === 'dm' && u.id !== S.me.id);
   const worker = setup.mode === 'worker';
+  const staff = isStaff(S.me), admin = isAdmin(S.me);
+  const otherDMs = staff && !worker ? (await api('/api/users/list')).filter(u => isStaff(u) && u.id !== S.me.id) : [];
+  const roleName = { player: 'Player', dm: 'DM', admin: 'Admin' }[S.me.role] || S.me.role;
   const themePref = window.gcTheme ? gcTheme.pref() : 'system'; // the theme script in index.html keeps these buttons in sync
+  const forget = `<button class="btn danger" id="st-forget">Forget everything on this device</button>`;
   c.innerHTML = `
     <h2>${ic('settings')} Settings <span class="muted" style="font-size:14px;font-weight:400">— stored only in this browser</span></h2>
     <div class="settings-grid">
@@ -304,8 +307,20 @@ async function renderSettings(c) {
         <p class="muted" style="font-size:13px;margin:8px 0 0">System follows this device's light or dark setting. The sun / moon button in the header flips it any time.</p>
       </div>
       <div class="card">
+        <h3>${ic('lock')} Your account</h3>
+        <p class="muted" style="font-size:13px;margin-top:0">Signed in as <b>${esc(S.me.name)}</b> <span class="role-pill role-${esc(S.me.role)}">${esc(roleName)}</span></p>
+        ${worker ? `
+        <label>Current password</label><input id="st-pw-cur" type="password" autocomplete="current-password">
+        <label>New password</label><input id="st-pw-new" type="password" autocomplete="new-password" placeholder="At least 8 characters">
+        <label>New password again</label><input id="st-pw-new2" type="password" autocomplete="new-password">
+        <div class="row" style="margin-top:8px"><button class="btn primary" id="st-pw-save">Change password</button><span class="err" id="st-pw-err" style="font-size:13px"></span></div>`
+        : `<p class="muted" style="font-size:13px">This device signs in with a GitHub token, so there's no personal password yet. Passwords, sign-in links and player logins arrive once the login server is set up.</p>`}
+        ${staff ? '' : `<hr style="border:none;border-top:1px solid var(--line);margin:14px 0 10px">${forget}`}
+      </div>
+      ${staff ? `
+      <div class="card">
         <h3>${ic('key')} Login server</h3>
-        <p class="muted" style="font-size:13px">${worker ? `This device logs in through <b>${esc(setup.worker)}</b>${setup.workerFromConfig ? ' (set in the site config)' : ''}. It holds the GitHub token and the assistant key; you hold a passcode.` : 'Not in use: this device logs in with a GitHub token. A login server (a free Cloudflare Worker, see worker/README.md in the private repo) keeps every secret off the browsers and lets DMs log in with a passcode.'}</p>
+        <p class="muted" style="font-size:13px">${worker ? `This device logs in through <b>${esc(setup.worker)}</b>${setup.workerFromConfig ? ' (set in the site config)' : ''}. It holds the GitHub token and the assistant key and enforces who can see what.` : 'Not in use: this device logs in with a GitHub token, which can read everything. A login server (a free Cloudflare Worker, see worker/README.md in the private repo) keeps every secret off the browsers and turns on passwords and player logins.'}</p>
         <label>Server URL</label>
         <input id="st-worker" value="${esc(setup.worker || '')}" placeholder="https://goat-crew-dm.….workers.dev" spellcheck="false">
         <div class="row" style="margin-top:8px"><button class="btn primary" id="st-worker-save">Save & log in again</button>${worker ? '<button class="btn" id="st-worker-off">Use a GitHub token instead</button>' : ''}</div>
@@ -332,45 +347,54 @@ async function renderSettings(c) {
         <button class="btn primary" id="st-gh-save">Save & reload</button>
       </div>
       <div class="card">
-        <h3>${ic('users')} Invite your co-DM</h3>
-        <p class="muted" style="font-size:13px">${worker
-          ? 'Makes a link that names the login server and who they are. They open it, type their passcode, and they\'re in. Send the passcode separately.'
-          : 'Makes a link that carries <b>this device\'s GitHub token</b> and signs them in as the DM you pick. They open it once on their device and they\'re in: no GitHub account or token of their own. Send it privately (not in a group chat), and to cut access later revoke the token on GitHub.'}</p>
+        <h3>${ic('users')} ${worker ? 'People & access' : 'Invite your co-DM'}</h3>
+        ${worker ? `<p class="muted" style="font-size:13px">${admin ? 'Add players and DMs, choose what each person can open, and send sign-in links or reset passwords from the Admin tab.' : 'Your admin adds people and sends sign-in links. Ask them if someone needs a login.'}</p>
+          ${admin ? `<button class="btn" id="st-open-admin">${ic('shield')} Open Admin</button>` : ''}` : `
+        <p class="muted" style="font-size:13px">Makes a link that carries <b>this device's GitHub token</b> and signs them in as the DM you pick. They open it once on their device and they're in: no GitHub account or token of their own. Send it privately (not in a group chat), and to cut access later revoke the token on GitHub.</p>
         <div class="row"><select id="st-invite-user">${otherDMs.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select>
-          <button class="btn" id="st-invite" ${(worker || setup.hasToken) && otherDMs.length ? '' : 'disabled'}>${ic('link')} Copy invite link</button></div>
-        <div class="muted" id="st-invite-out" style="font-size:12px;word-break:break-all;margin-top:6px;min-height:1em"></div>
+          <button class="btn" id="st-invite" ${setup.hasToken && otherDMs.length ? '' : 'disabled'}>${ic('link')} Copy invite link</button></div>
+        <div class="muted" id="st-invite-out" style="font-size:12px;word-break:break-all;margin-top:6px;min-height:1em"></div>`}
         <hr style="border:none;border-top:1px solid var(--line);margin:14px 0 10px">
-        <button class="btn danger" id="st-forget">Forget everything on this device</button>
-      </div>
+        ${forget}
+      </div>` : ''}
       <div class="card">
         <h3>Shortcuts</h3>
-        <p class="muted" style="font-size:14px">Anywhere: <span class="kbd">N</span> next turn while the Battle panel is showing, <span class="kbd">/</span> jump to the chat box, <span class="kbd">Esc</span> close the map panel.<br>
+        ${staff ? `<p class="muted" style="font-size:14px">Anywhere: <span class="kbd">N</span> next turn while the Battle panel is showing, <span class="kbd">/</span> jump to the chat box, <span class="kbd">Esc</span> close the map panel.<br>
         DM Chat: <span class="kbd">Enter</span> sends to your co-DM, <span class="kbd">Ctrl/⌘ + Enter</span> asks the assistant.<br>
         Map: tap a room for notes; <b>Party moves here</b> is what your co-DM sees.<br>
-        Battle: run a fight from the Battle tab (−/+ HP, ▶ Next turn, 📖 stat block); add monsters from the DM tab.</p>
-        <p class="muted" style="font-size:13px">Live updates poll the data repo every 4 s: ● green in the header means connected.</p>
+        Battle: run a fight from the Battle tab (−/+ HP, ▶ Next turn, 📖 stat block); add monsters from the DM tab.</p>`
+        : `<p class="muted" style="font-size:14px">Party: tap your character to update HP, gold and conditions.<br>Dice: roll from the Dice tab; everyone at the table sees the result.<br>Battle map: shows the fight as the DMs reveal it.</p>`}
+        <p class="muted" style="font-size:13px">Live updates check for changes every 4 s: ● green in the header means connected.</p>
       </div>
     </div>`;
-  $('#st-ai-save').onclick = () => {
+  const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
+  on('st-ai-save', () => {
     const k = $('#st-aikey') ? $('#st-aikey').value.trim() : ''; if (k) localStorage.setItem('gc_ai_key', k);
     localStorage.setItem('gc_ai_model', $('#st-model').value); localStorage.setItem('gc_ai_effort', $('#st-effort').value);
     toast('Assistant settings saved'); render();
-  };
-  $('#st-worker-save').onclick = async () => { await api('/api/worker', { method: 'POST', body: { url: $('#st-worker').value } }); location.reload(); };
-  if ($('#st-worker-off')) $('#st-worker-off').onclick = async () => { await api('/api/worker', { method: 'POST', body: { url: '' } }); location.reload(); };
-  $('#st-gh-save').onclick = async () => {
+  });
+  on('st-worker-save', async () => { await api('/api/worker', { method: 'POST', body: { url: $('#st-worker').value } }); location.reload(); });
+  on('st-worker-off', async () => { await api('/api/worker', { method: 'POST', body: { url: '' } }); location.reload(); });
+  on('st-gh-save', async () => {
     await api('/api/repo', { method: 'POST', body: { owner: $('#st-owner').value, repo: $('#st-repo').value, branch: $('#st-branch').value } });
     const t = $('#st-ghtoken').value.trim(); if (t) await api('/api/token', { method: 'POST', body: { token: t } });
     location.reload();
-  };
-  $('#st-invite').onclick = async () => {
+  });
+  on('st-open-admin', () => { S.tab = 'admin'; localStorage.setItem('gc_tab', 'admin'); render(); });
+  on('st-invite', async () => {
     const id = $('#st-invite-user').value;
-    const link = worker
-      ? `${location.origin}${location.pathname}#worker=${encodeURIComponent(setup.worker)}&user=${encodeURIComponent(id)}`
-      : `${location.origin}${location.pathname}#token=${encodeURIComponent(TOKEN)}&user=${encodeURIComponent(id)}`;
+    const link = `${location.origin}${location.pathname}#token=${encodeURIComponent(TOKEN)}&user=${encodeURIComponent(id)}`;
     const out = $('#st-invite-out');
-    try { await navigator.clipboard.writeText(link); out.textContent = worker ? `Copied. It opens the passcode login for ${$('#st-invite-user').selectedOptions[0].textContent}; send their passcode separately.` : `Copied. It signs in as ${$('#st-invite-user').selectedOptions[0].textContent} and carries your token: send it privately.`; toast('Invite link copied'); }
+    try { await navigator.clipboard.writeText(link); out.textContent = `Copied. It signs in as ${$('#st-invite-user').selectedOptions[0].textContent} and carries your token: send it privately.`; toast('Invite link copied'); }
     catch (_) { out.textContent = link; toast('Clipboard blocked: copy the link below', 4000); }
-  };
-  $('#st-forget').onclick = () => { if (!confirm('Remove the GitHub token, API key, login server and session from this browser?')) return; ['gc_gh_token', 'gc_gh_repo', 'gc_ai_key', 'gc_ai_model', 'gc_ai_effort', 'gc_session', 'gc_user', 'gc_worker', 'gc_wsession', 'gc_wassistant', 'gc_pin'].forEach(k => localStorage.removeItem(k)); location.reload(); };
+  });
+  on('st-pw-save', async () => {
+    const err = $('#st-pw-err'); err.textContent = '';
+    const cur = $('#st-pw-cur').value, a = $('#st-pw-new').value, b = $('#st-pw-new2').value;
+    if (a.length < 8) { err.textContent = 'Use at least 8 characters.'; return; }
+    if (a !== b) { err.textContent = 'The new passwords don\'t match.'; return; }
+    try { await api('/api/me/password', { method: 'POST', body: { current: cur, next: a } }); ['st-pw-cur', 'st-pw-new', 'st-pw-new2'].forEach(i => { $('#' + i).value = ''; }); toast('Password changed'); }
+    catch (e) { err.textContent = e.message || 'Could not change it'; }
+  });
+  on('st-forget', () => { if (!confirm('Remove the GitHub token, API key, login server and session from this browser?')) return; ['gc_gh_token', 'gc_gh_repo', 'gc_ai_key', 'gc_ai_model', 'gc_ai_effort', 'gc_session', 'gc_user', 'gc_worker', 'gc_wsession', 'gc_wassistant', 'gc_pin'].forEach(k => localStorage.removeItem(k)); location.reload(); });
 }

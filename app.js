@@ -80,8 +80,48 @@ async function load(entity) {
 
 // ---------- login (GitHub token + which DM you are) ----------
 async function boot() {
+  if (sessionStorage.getItem('gc_invite')) return showInvite();
   try { S.me = await api('/api/me'); showMain(); }
   catch (_) { showLogin(); }
+}
+/* A sign-in link from the admin: check it, then let the person choose their own password. */
+async function showInvite() {
+  const token = sessionStorage.getItem('gc_invite');
+  $('#main').classList.add('hidden'); $('#login').classList.add('hidden');
+  const box = $('#invite'); box.classList.remove('hidden');
+  const err = $('#invite-err'); err.textContent = '';
+  const done = () => { sessionStorage.removeItem('gc_invite'); box.classList.add('hidden'); };
+  let who;
+  try { who = (await api('/api/invite/check', { method: 'POST', body: { token } })).user; }
+  catch (e) {
+    $('#invite-title').textContent = 'This link has expired';
+    $('#invite-lead').textContent = e.message || 'Ask your admin for a new sign-in link.';
+    $('#invite-form').classList.add('hidden');
+    $('#invite-back').onclick = () => { done(); showLogin(); };
+    return;
+  }
+  $('#invite-title').textContent = `Welcome, ${who.name}`;
+  $('#invite-lead').textContent = `Choose a password for the Goat Crew screen. You'll use it with your name to sign in from now on.`;
+  $('#invite-form').classList.remove('hidden');
+  $('#invite-role').textContent = { player: 'Player', dm: 'DM', admin: 'Admin' }[who.role] || '';
+  const go = async () => {
+    err.textContent = '';
+    const a = $('#invite-pass').value, b = $('#invite-pass2').value;
+    if (a.length < 8) { err.textContent = 'Use at least 8 characters.'; return; }
+    if (a !== b) { err.textContent = 'The two passwords don\'t match.'; return; }
+    $('#invite-btn').disabled = true;
+    try {
+      await api('/api/invite/accept', { method: 'POST', body: { token, password: a } });
+      done();
+      S.me = await api('/api/me');
+      showMain();
+      toast(`Signed in. Welcome to the table, ${S.me.name}.`, 4000);
+    } catch (e) { err.textContent = e.message || 'Could not set the password'; $('#invite-btn').disabled = false; }
+  };
+  $('#invite-btn').onclick = go;
+  $('#invite-pass2').onkeydown = e => { if (e.key === 'Enter') go(); };
+  $('#invite-back').onclick = () => { done(); showLogin(); };
+  setTimeout(() => $('#invite-pass').focus(), 50);
 }
 async function showLogin() {
   $('#main').classList.add('hidden');
@@ -109,8 +149,9 @@ async function loadLoginUsers() {
       await api('/api/repo', { method: 'POST', body: { owner: $('#login-owner').value, repo: $('#login-repo').value, branch: $('#login-branch').value } });
       if (typed) await api('/api/token', { method: 'POST', body: { token: typed } });
     }
-    const users = (await api('/api/users/list')).filter(u => u.role === 'dm');
-    sel.innerHTML = users.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('') || '<option value="">— no DM logins set up —</option>';
+    // With the login server everyone who has a password is listed; with a GitHub token only DMs and admins can sign in.
+    const users = (await api('/api/users/list')).filter(u => setup.mode === 'worker' || isStaff(u));
+    sel.innerHTML = users.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('') || '<option value="">— no logins set up yet —</option>';
     const saved = localStorage.getItem('gc_user');
     if (saved && users.some(u => u.id === saved)) sel.value = saved;
     $('#login-err').textContent = '';
@@ -139,9 +180,15 @@ function showMain() {
   $('#login').classList.add('hidden');
   $('#main').classList.remove('hidden');
   $('#whoami').textContent = S.me.name;
-  if (S.me.role === 'dm') $$('.tab.dm-only').forEach(t => t.classList.remove('hidden'));
-  S.tab = localStorage.getItem('gc_tab') || 'map';
-  if (['dm', 'arc'].includes(S.tab) && S.me.role !== 'dm') S.tab = 'party';
+  const role = { player: 'Player', dm: 'DM', admin: 'Admin' }[S.me.role] || '';
+  $('#whoami').innerHTML = `${esc(S.me.name)} <span class="role-pill role-${esc(S.me.role)}">${role}</span>`;
+  // Only the tabs this person may open (the login server enforces the same list for players)
+  const tabs = new Set(S.me.tabs || defaultTabs(S.me.role));
+  $$('#tabs .tab').forEach(t => t.classList.toggle('hidden', t.dataset.tab !== 'settings' && !tabs.has(t.dataset.tab)));
+  $$('#pin-pick option').forEach(o => { if (o.value) o.hidden = !tabs.has(o.value); });
+  if (S.pin && !tabs.has(S.pin)) { S.pin = ''; localStorage.removeItem('gc_pin'); }
+  S.tab = localStorage.getItem('gc_tab') || (isStaff(S.me) ? 'map' : 'party');
+  if (S.tab !== 'settings' && !tabs.has(S.tab)) S.tab = ['party', 'map'].find(t => tabs.has(t)) || [...tabs][0] || 'settings';
   connectSSE();
   render();
 }
@@ -151,7 +198,7 @@ $$('#tabs .tab').forEach(b => b.onclick = () => {
   render();
 });
 $('#pin-pick').onchange = e => setPin(e.target.value);
-const TAB_ICONS = { map: 'map', chat: 'chat', party: 'users', battle: 'swords', battlemap: 'grid', dice: 'dice', journal: 'book', codex: 'scroll', quests: 'flag', board: 'pin', arc: 'route', notes: 'notebook', dm: 'crown', settings: 'settings' };
+const TAB_ICONS = { map: 'map', chat: 'chat', party: 'users', battle: 'swords', battlemap: 'grid', dice: 'dice', journal: 'book', codex: 'scroll', quests: 'flag', board: 'pin', arc: 'route', notes: 'notebook', dm: 'crown', admin: 'shield', settings: 'settings' };
 $$('#tabs .tab').forEach(b => { const n = TAB_ICONS[b.dataset.tab]; if (n) b.innerHTML = ic(n) + `<span>${esc(b.textContent.trim())}</span>`; });
 // Keyboard: N = next turn when the Battle panel is showing, / = jump to the DM chat box, Esc = close the map side panel / leave a field
 document.addEventListener('keydown', e => {
@@ -191,6 +238,7 @@ async function renderInto(c, tab) {
     else if (tab === 'map') await renderMap(c);
     else if (tab === 'chat') await renderChat(c);
     else if (tab === 'settings') await renderSettings(c);
+    else if (tab === 'admin') await renderAdmin(c);
   } catch (e) { c.innerHTML = `<p class="err">Failed to load: ${esc(e.message)}</p>`; }
 }
 async function renderOnce() {
@@ -267,7 +315,7 @@ async function renderCharDetail(c, ch) {
         <input id="conditions" style="flex:1" value="${esc(ch.conditions || '')}" placeholder="poisoned, inspired…" ${ed ? '' : 'disabled'}></div>
       ${ed ? '<p class="muted" style="font-size:13px">Changes save automatically and appear on everyone\'s screen.</p>' : ''}
     </div>
-    ${S.me.role === 'dm' ? `<div class="card dm"><h3>DM notes <span class="badge dm">DM only</span></h3>
+    ${isStaff(S.me) ? `<div class="card dm"><h3>DM notes <span class="badge dm">DM only</span></h3>
       <textarea id="dmNotes" placeholder="Secrets about ${esc(ch.name)}…">${esc(ch.dmNotes || '')}</textarea>
       <button class="btn small dm" id="save-dmnotes">Save DM notes</button></div>` : ''}
     <details class="collapse" open><summary>Character sheet & backstory ${ed ? '<button class="btn small" id="edit-content">Edit</button>' : ''}</summary>
@@ -300,7 +348,7 @@ async function renderCharDetail(c, ch) {
       $('#cancel-content').onclick = () => refresh(c);
     };
   }
-  if (S.me.role === 'dm') $('#save-dmnotes').onclick = async () => { await patch({ dmNotes: $('#dmNotes').value }); toast('DM notes saved'); };
+  if (isStaff(S.me)) $('#save-dmnotes').onclick = async () => { await patch({ dmNotes: $('#dmNotes').value }); toast('DM notes saved'); };
 }
 
 // ---------- generic entry editor form ----------
@@ -361,7 +409,7 @@ function renderJournalGroups(shown, sortMode, isDM) {
 async function renderJournal(c) {
   const entries = await load('journal');
   const q = (S.search.journal || '').toLowerCase();
-  const isDM = S.me.role === 'dm';
+  const isDM = isStaff(S.me);
   const shown = entries.filter(e => !q || (e.title + ' ' + e.content + ' ' + (e.tags || []).join(' ')).toLowerCase().includes(q));
   // sort: by session, by when it was added, by title, or a custom order (pos) arranged with ▲▼
   const sortMode = S.search.journalSort || localStorage.getItem('gc_jsort') || 'session-desc';
@@ -443,7 +491,7 @@ async function renderJournal(c) {
 const CATS = ['npc', 'location', 'faction', 'item'];
 async function renderCodex(c) {
   const entries = await load('codex');
-  const isDM = S.me.role === 'dm';
+  const isDM = isStaff(S.me);
   const q = (S.search.codex || '').toLowerCase();
   const cat = S.search.codexCat || 'all';
   const shown = entries.filter(e =>
@@ -500,7 +548,7 @@ async function renderCodex(c) {
 // ---------- QUESTS ----------
 async function renderQuests(c) {
   const quests = await load('quests');
-  const isDM = S.me.role === 'dm';
+  const isDM = isStaff(S.me);
   const order = { active: 0, rumoured: 1, completed: 2 };
   quests.sort((a, b) => (order[a.status] ?? 3) - (order[b.status] ?? 3));
   const fields = [
@@ -547,7 +595,7 @@ const shortName = u => String(u || '').replace(/\s*\((player|dm|co-dm)\)\s*$/i, 
 // ---------- BATTLE ----------
 async function renderBattle(c) {
   const enc = await load('encounter');
-  const isDM = S.me.role === 'dm';
+  const isDM = isStaff(S.me);
   const combatants = enc.combatants || [];
   if (!combatants.length) {
     c.innerHTML = `<div class="card"><h3>${ic('swords')} Battle</h3>
@@ -671,7 +719,7 @@ function noticeMeta(n) {
 }
 async function renderBoard(c) {
   const notices = await load('notices');
-  const isDM = S.me.role === 'dm';
+  const isDM = isStaff(S.me);
   const mine = n => n.createdBy === S.me.name;
   const canEdit = n => mine(n) || isDM;
   const tops = notices.filter(n => !n.parentId).sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
@@ -758,7 +806,7 @@ const snip = s => { const t = String(s || '').replace(/[#*_>`|]/g, '').replace(/
 
 async function renderArc(c) {
   const [cards, codex, users] = await Promise.all([load('arc'), load('codex'), load('users/list')]);
-  const dms = users.filter(u => u.role === 'dm');
+  const dms = users.filter(u => isStaff(u));
   const arcs = [...new Set(cards.map(x => x.arc).filter(Boolean))];
   let arc = S.search.arc || localStorage.getItem('gc_arc');
   // default to the arc that is being played (has a beat marked now), else the newest
@@ -993,7 +1041,7 @@ async function renderArc(c) {
 let lastTurnKey = null;
 async function onEntityEvent(entity) {
   if (!S.me) return;
-  if (entity === 'encounter' && S.me.role !== 'dm') {
+  if (entity === 'encounter' && !isStaff(S.me)) {
     let enc;
     try { enc = await load('encounter'); } catch (_) { return; }
     const active = (enc.combatants || [])[enc.turn || 0] || null;
@@ -1076,7 +1124,7 @@ async function renderDM(c) {
 
     <details class="collapse"><summary>${ic('users')} Users</summary>
       <div class="card dm"><table class="enc"><thead><tr><th>User</th><th>Role</th><th>Character</th></tr></thead><tbody>
-        ${users.map(u => `<tr><td>${esc(u.name)}</td><td>${u.role === 'dm' ? '<span class="badge dm">DM</span>' : 'player'}</td>
+        ${users.map(u => `<tr><td>${esc(u.name)}</td><td>${u.role === 'admin' ? '<span class="badge dm">Admin</span>' : u.role === 'dm' ? '<span class="badge dm">DM</span>' : 'player'}</td>
           <td>${esc(chars.find(x => x.id === u.characterId)?.name || '—')}</td></tr>`).join('')}
       </tbody></table><p class="muted" style="font-size:13px">Logins are GitHub tokens now (⚙ Settings). Only DM users can enter this screen.</p></div>
     </details>

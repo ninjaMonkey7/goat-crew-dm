@@ -133,7 +133,7 @@ function dpToggleFs() {
 }
 function dpChip(text, ms = 3500) { const c = dp$('dp-chip'); c.textContent = text; c.classList.add('show'); clearTimeout(DP.chipT); DP.chipT = setTimeout(() => c.classList.remove('show'), ms); }
 document.addEventListener('keydown', e => { if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); dp$('dp-fs').classList.add('hidden'); dpToggleFs(); } });
-document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) dpChip('Press F for full screen'); });
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && !/[?&]embed=1/.test(location.search)) dpChip('Press F for full screen'); });
 function dpWake() { document.body.classList.remove('idle'); clearTimeout(DP.idleT); DP.idleT = setTimeout(() => document.body.classList.add('idle'), 2000); }
 ['mousemove', 'pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, dpWake, { passive: true }));
 
@@ -162,7 +162,7 @@ function dpWake() { document.body.classList.remove('idle'); clearTimeout(DP.idle
   }
   // the camera re-targets when the window changes size (moved to the TV, full screen)
   window.addEventListener('resize', () => { DP.view.request(); });
-  if (!document.fullscreenElement) {
+  if (!document.fullscreenElement && !/[?&]embed=1/.test(location.search)) { // embedded in a player's Battle map tab: no full-screen prompt
     const fs = dp$('dp-fs'); fs.classList.remove('hidden');
     fs.onclick = () => { fs.classList.add('hidden'); dpToggleFs(); };
   }

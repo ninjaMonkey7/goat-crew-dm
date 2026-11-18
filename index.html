@@ -47,6 +47,7 @@
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="dm.css">
 <link rel="stylesheet" href="battlemap.css">
+<link rel="stylesheet" href="admin.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐐</text></svg>">
 </head>
 <body>
@@ -63,8 +64,8 @@
       <label>Who are you?</label>
       <select id="login-user"><option value="">— paste your token first —</option></select>
       <div id="login-worker" class="hidden">
-        <label>Passcode</label>
-        <input id="login-pass" type="password" autocomplete="current-password" placeholder="goat-…">
+        <label>Password</label>
+        <input id="login-pass" type="password" autocomplete="current-password" placeholder="Your password">
       </div>
       <button id="login-btn" class="btn primary">Enter the Grumpy Goat</button>
       <p id="login-err" class="err"></p>
@@ -76,6 +77,25 @@
         <div class="row"><input id="login-owner" placeholder="owner" style="flex:1;min-width:0"><input id="login-repo" placeholder="repo" style="flex:1;min-width:0"><input id="login-branch" placeholder="branch" style="width:90px"></div>
         <p class="muted" style="font-size:12px;margin:6px 0 0">Settings are stored only in this browser.</p>
       </details>
+    </div>
+  </div>
+
+  <!-- Sign-in link from an admin: choose your own password -->
+  <div id="invite" class="hidden">
+    <div class="login-box invite-box">
+      <div class="invite-mark">🐐</div>
+      <h1 id="invite-title">Checking your link…</h1>
+      <p id="invite-lead" class="muted"></p>
+      <div id="invite-form" class="hidden">
+        <p class="invite-role-row muted">Joining as <span id="invite-role" class="role-pill"></span></p>
+        <label for="invite-pass">New password</label>
+        <input id="invite-pass" type="password" autocomplete="new-password" minlength="8" placeholder="At least 8 characters">
+        <label for="invite-pass2">Type it again</label>
+        <input id="invite-pass2" type="password" autocomplete="new-password" minlength="8">
+        <button id="invite-btn" class="btn primary">Set password and sign in</button>
+      </div>
+      <p id="invite-err" class="err"></p>
+      <button id="invite-back" class="btn ghost small">Go to the normal sign-in</button>
     </div>
   </div>
 
@@ -102,6 +122,7 @@
       <button data-tab="arc" class="tab dm-only hidden">Arc</button>
       <button data-tab="notes" class="tab">My Notes</button>
       <button data-tab="dm" class="tab dm-only hidden">DM</button>
+      <button data-tab="admin" class="tab admin-only hidden">Admin</button>
       <button data-tab="settings" class="tab" title="Settings">Settings</button>
       <select id="pin-pick" title="Pin a panel to the right of whatever tab you're on" aria-label="Pin a panel">
         <option value="">Pin a panel…</option>
@@ -127,6 +148,7 @@
 <script src="battle-scene.js"></script>
 <script src="battlemap.js"></script>
 <script src="chat.js"></script>
+<script src="admin.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

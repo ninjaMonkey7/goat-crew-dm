@@ -322,3 +322,6 @@ body.tab-battlemap { overscroll-behavior: none; }
   .bm-ns-card { min-height: 0; }
   .bm-insp { width: calc(100% - 92px); max-height: 46%; }
 }
+
+/* players see the TV view inside their Battle map tab */
+.bm-player-frame { display: block; width: 100%; height: calc(100vh - 106px); border: 0; background: #07080b; }

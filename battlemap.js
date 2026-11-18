@@ -280,6 +280,8 @@ window.addEventListener('gc-saved', e => {
 
 // ---------- render the tab ----------
 async function renderBattleMap(c) {
+  // Players get the same player-safe view as the TV (the login server only sends them that much anyway)
+  if (!isStaff(S.me)) { if (BM.view) { BM.view.destroy(); BM.view = null; } c.innerHTML = '<iframe class="bm-player-frame" src="display.html?embed=1" title="Battle map"></iframe>'; return; }
   await api('/api/battle'); // logged in + data loaded
   if (BM.view) { BM.view.destroy(); BM.view = null; }
   bmRebase();

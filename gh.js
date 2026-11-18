@@ -7,11 +7,13 @@
 const GH = { owner: 'ninjaMonkey7', repo: 'goat-crew-campaign-app', branch: 'data', base: 'https://api.github.com', pollMs: 4000 };
 (() => { try { Object.assign(GH, JSON.parse(localStorage.getItem('gc_gh_repo') || '{}')); } catch (_) { /* ignore */ } })();
 // Invite link: index.html#token=…&user=codm (token mode) or #worker=https://…&user=codm (login server).
+// Sign-in link from an admin: index.html#invite=<signed token>[&worker=https://…] → "choose your password".
 (() => {
   try {
     const h = new URLSearchParams(location.hash.replace(/^#/, ''));
-    const t = (h.get('token') || '').trim(), u = (h.get('user') || '').trim(), w = (h.get('worker') || '').trim();
-    if (!t && !u && !w) return;
+    const t = (h.get('token') || '').trim(), u = (h.get('user') || '').trim(), w = (h.get('worker') || '').trim(), inv = (h.get('invite') || '').trim();
+    if (!t && !u && !w && !inv) return;
+    if (inv) { sessionStorage.setItem('gc_invite', inv); localStorage.removeItem('gc_wsession'); localStorage.removeItem('gc_session'); }
     if (w) { localStorage.setItem('gc_worker', w.replace(/\/+$/, '')); localStorage.removeItem('gc_wsession'); }
     if (t) localStorage.setItem('gc_gh_token', t);
     if (u) { localStorage.setItem('gc_user', u); if (t) localStorage.setItem('gc_session', u); }
@@ -137,7 +139,13 @@ async function loadAll() {
     if (!r.ok) fail(r.status, explain(r.status, `branch ${GH.branch}`));
     headEtag = r.headers.get('etag');
     headSha = (await r.json()).object.sha;
-    await Promise.all(Object.keys(FILES).map(readFile));
+    // Only fetch files that exist and that this person may read (the login server lists just those for players)
+    const t = await gh(repoPath(`git/trees/${headSha}?recursive=1`));
+    const present = t.ok ? new Set(((await t.json()).tree || []).map(x => x.path)) : null;
+    await Promise.all(Object.entries(FILES).map(([name, path]) => {
+      if (present && !present.has(path)) { RAW[name] = defaults(name); SHA[path] = null; return null; }
+      return readFile(name);
+    }));
   })();
   loaded.catch(() => { loaded = null; });
   return loaded;
@@ -248,7 +256,19 @@ new MutationObserver(() => {
 }).observe(document.documentElement, { childList: true, subtree: true });
 
 // ---------- visibility filters (everyone here is a DM, kept for parity with the old app) ----------
-const isDMUser = u => u.role === 'dm';
+/* Roles: player < dm < admin. "Staff" (dm, admin) see everything; admin also manages people. */
+const ROLE_NAMES = ['player', 'dm', 'admin'];
+const isStaff = u => !!u && (u.role === 'dm' || u.role === 'admin');
+const isAdmin = u => !!u && u.role === 'admin';
+const isDMUser = isStaff;
+// Tabs a role can open (the login server has the same list and enforces it for players).
+const TAB_DEFS = [
+  { id: 'map', label: 'Map', player: true }, { id: 'chat', label: 'DM Chat' }, { id: 'party', label: 'Party', player: true },
+  { id: 'battle', label: 'Battle', player: true }, { id: 'battlemap', label: 'Battle map', player: true }, { id: 'dice', label: 'Dice', player: true },
+  { id: 'journal', label: 'Journal', player: true }, { id: 'codex', label: 'Codex', player: true }, { id: 'quests', label: 'Quests', player: true },
+  { id: 'board', label: 'Board', player: true }, { id: 'arc', label: 'Arc' }, { id: 'notes', label: 'My Notes', player: true }, { id: 'dm', label: 'DM' }
+];
+function defaultTabs(role) { const t = TAB_DEFS.filter(x => role !== 'player' || x.player).map(x => x.id); return role === 'admin' ? [...t, 'admin'] : t; }
 function charView(c, user) { const out = { ...c }; if (!isDMUser(user) && user.characterId !== c.id) delete out.dmNotes; out.editable = isDMUser(user) || user.characterId === c.id; return out; }
 function codexView(e, user) { if (isDMUser(user)) return { ...e }; if (!e.revealed) return null; const { dmContent, ...rest } = e; return rest; }
 function journalView(e, user) { return isDMUser(user) || !e.dmOnly ? { ...e } : null; }
@@ -317,16 +337,62 @@ function logHistory(user, entity, entityId, field, oldVal, newVal) {
 }
 
 // ---------- session ----------
+/* Who is signed in. With the login server, role and tabs come from the server (it enforces them);
+   with a GitHub token in the browser there is no enforcement, so the token holder's users.json role applies. */
 async function requireMe() {
   if (ME) return ME;
   if (workerMode() ? !WSESSION : !TOKEN) fail(401, 'Not logged in');
   const id = localStorage.getItem('gc_session');
   if (!id) fail(401, 'Not logged in');
+  const server = workerMode() ? await workerCall('/me') : null;
+  if (server && server.user !== id) { localStorage.setItem('gc_session', server.user); }
   const users = RAW.users || await readFile('users');
-  const u = users.find(x => x.id === id);
+  const u = users.find(x => x.id === (server ? server.user : id));
   if (!u) { localStorage.removeItem('gc_session'); fail(401, 'Not logged in'); }
-  ME = u;
+  const role = server ? server.role : (ROLE_NAMES.includes(u.role) ? u.role : 'player');
+  ME = { ...u, role, characterId: server ? server.characterId : u.characterId, tabs: server ? server.tabs : defaultTabs(role) };
   return ME;
+}
+
+/* /api/admin/*: people, roles, access, sign-in links. With the login server everything is done (and
+   enforced) there. With only a GitHub token, an admin can still edit names, roles and characters in
+   users.json, but passwords, links and access limits need the server. */
+async function adminRoute(path, method, body, user) {
+  if (!isAdmin(user)) fail(403, 'Admins only');
+  if (workerMode()) return workerCall('/admin' + path, { method, body: ['POST', 'PATCH', 'PUT'].includes(method) ? (body || {}) : undefined });
+  await loadAll();
+  const who = user.name;
+  if (path === '/users' && method === 'GET') return {
+    tokenMode: true, roles: ROLE_NAMES, breakGlass: false,
+    tabs: TAB_DEFS.map(t => ({ id: t.id, label: t.label, player: !!t.player })),
+    characters: (RAW.characters || []).map(c => ({ id: c.id, name: c.name })),
+    users: (RAW.users || []).map(u => { const role = ROLE_NAMES.includes(u.role) ? u.role : 'player'; return { id: u.id, name: u.name, role, characterId: u.characterId || null, email: '', status: 'token', lastLogin: null, inviteExp: null, access: null, tabs: defaultTabs(role), bootstrap: false }; })
+  };
+  const admins = () => (RAW.users || []).filter(u => u.role === 'admin');
+  if (path === '/users' && method === 'POST') {
+    const name = String(body.name || '').trim().slice(0, 60); if (!name) fail(400, 'Give them a name');
+    const base = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '').slice(0, 20) || 'user';
+    let id = base, n = 2; while ((RAW.users || []).some(u => u.id === id)) id = base + n++;
+    await save('users', arr => [...arr, { id, name, role: ROLE_NAMES.includes(body.role) ? body.role : 'player', characterId: body.characterId || null }], `${who}: add ${name}`);
+    return { ok: true, id };
+  }
+  const m = path.match(/^\/users\/([\w-]+)(?:\/(invite|reset|signout))?$/);
+  if (!m) fail(404, 'Unknown endpoint');
+  if (m[2]) fail(400, 'Sign-in links, resets and sign-outs need the login server. See the note at the top of this page.');
+  const target = (RAW.users || []).find(u => u.id === m[1]); if (!target) fail(404, 'No such person');
+  if (method === 'PATCH') {
+    if (body.role !== undefined && target.id === user.id && body.role !== 'admin') fail(400, 'You can\'t remove your own admin role');
+    if (body.role !== undefined && target.role === 'admin' && body.role !== 'admin' && admins().length <= 1) fail(400, 'There must be at least one admin');
+    const upd = {}; for (const k of ['name', 'role', 'characterId']) if (body[k] !== undefined) upd[k] = k === 'characterId' ? (body[k] || null) : body[k];
+    if (Object.keys(upd).length) await save('users', arr => { Object.assign(arr.find(x => x.id === target.id) || {}, upd); return arr; }, `${who}: ${target.name} — ${Object.keys(upd).join(', ')}`);
+    return { ok: true };
+  }
+  if (method === 'DELETE') {
+    if (target.id === user.id) fail(400, 'You can\'t delete yourself');
+    await save('users', arr => arr.filter(x => x.id !== target.id), `${who}: remove ${target.name}`);
+    return { ok: true };
+  }
+  fail(404, 'Unknown endpoint');
 }
 
 // ---------- api() — same signature app.js already uses ----------
@@ -359,8 +425,18 @@ async function route(path, method, body) {
   if (path === '/api/users/list') {
     if (workerMode() && !WSESSION) return workerCall('/users'); // names only, no session needed
     const users = RAW.users || await readFile('users');
-    return [...users].sort((a, b) => (a.role === 'dm' ? 0 : 1) - (b.role === 'dm' ? 0 : 1) || (a.order ?? 0) - (b.order ?? 0)).map(u => ({ id: u.id, name: u.name, role: u.role }));
+    return [...users].sort((a, b) => (isStaff(a) ? 0 : 1) - (isStaff(b) ? 0 : 1) || (a.order ?? 0) - (b.order ?? 0)).map(u => ({ id: u.id, name: u.name, role: u.role }));
   }
+  // --- sign-in links and passwords (login server only) ---
+  if (path === '/api/invite/check' && method === 'POST') { if (!workerMode()) fail(400, 'Sign-in links need the login server'); return workerCall('/invite/check', { method: 'POST', body: { token: body.token } }); }
+  if (path === '/api/invite/accept' && method === 'POST') {
+    if (!workerMode()) fail(400, 'Sign-in links need the login server');
+    const res = await workerCall('/invite/accept', { method: 'POST', body: { token: body.token, password: body.password } });
+    WSESSION = res.token; localStorage.setItem('gc_wsession', WSESSION); localStorage.setItem('gc_wassistant', res.assistant ? '1' : '');
+    localStorage.setItem('gc_session', res.user); localStorage.setItem('gc_user', res.user); ME = null; loaded = null;
+    return { ok: true, user: res.user };
+  }
+  if (path === '/api/me/password' && method === 'POST') { if (!workerMode()) fail(400, 'Passwords need the login server'); return workerCall('/me/password', { method: 'POST', body }); }
   if (path === '/api/login' && method === 'POST') {
     if (workerMode()) {
       const res = await workerCall('/login', { method: 'POST', body: { user: body.userId, passcode: body.passcode } });
@@ -373,15 +449,17 @@ async function route(path, method, body) {
     const users = await readFile('users');
     const u = users.find(x => x.id === body.userId);
     if (!u) fail(401, 'Pick who you are');
-    localStorage.setItem('gc_session', u.id); ME = u;
+    localStorage.setItem('gc_session', u.id); ME = null; // requireMe() fills in role and tabs (from the login server when there is one)
+    await requireMe();
     return { ok: true };
   }
   if (path === '/api/logout' && method === 'POST') { localStorage.removeItem('gc_session'); if (workerMode()) { WSESSION = ''; localStorage.removeItem('gc_wsession'); } ME = null; return { ok: true }; }
-  if (path === '/api/me') { const u = await requireMe(); return { id: u.id, name: u.name, role: u.role, characterId: u.characterId }; }
+  if (path === '/api/me') { const u = await requireMe(); return { id: u.id, name: u.name, role: u.role, characterId: u.characterId, tabs: u.tabs }; }
   if (path === '/api/setup') return { owner: GH.owner, repo: GH.repo, branch: GH.branch, hasToken: !!TOKEN, mode: workerMode() ? 'worker' : 'direct', worker: WORKER, workerFromConfig: !!CFG.worker && !localStorage.getItem('gc_worker'), hasSession: !!WSESSION, assistantOnServer: localStorage.getItem('gc_wassistant') === '1' };
 
   const user = await requireMe();
-  const isDM = user.role === 'dm';
+  const isDM = isStaff(user);
+  if (path.startsWith('/api/admin/')) return adminRoute(path.slice('/api/admin'.length), method, body, user);
   await loadAll();
   const who = user.name;
 
