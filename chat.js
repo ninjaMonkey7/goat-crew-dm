@@ -294,9 +294,15 @@ async function renderSettings(c) {
   const setup = await api('/api/setup');
   const otherDMs = (await api('/api/users/list')).filter(u => u.role === 'dm' && u.id !== S.me.id);
   const worker = setup.mode === 'worker';
+  const themePref = window.gcTheme ? gcTheme.pref() : 'system'; // the theme script in index.html keeps these buttons in sync
   c.innerHTML = `
     <h2>${ic('settings')} Settings <span class="muted" style="font-size:14px;font-weight:400">— stored only in this browser</span></h2>
     <div class="settings-grid">
+      <div class="card">
+        <h3>${ic('sun')} Appearance</h3>
+        <div class="segmented" role="group" aria-label="Theme">${[['system', 'monitor', 'System'], ['light', 'sun', 'Light'], ['dark', 'moon', 'Dark']].map(([v, i, l]) => `<button type="button" data-theme-set="${v}" aria-pressed="${v === themePref}">${ic(i)} ${l}</button>`).join('')}</div>
+        <p class="muted" style="font-size:13px;margin:8px 0 0">System follows this device's light or dark setting. The sun / moon button in the header flips it any time.</p>
+      </div>
       <div class="card">
         <h3>${ic('key')} Login server</h3>
         <p class="muted" style="font-size:13px">${worker ? `This device logs in through <b>${esc(setup.worker)}</b>${setup.workerFromConfig ? ' (set in the site config)' : ''}. It holds the GitHub token and the assistant key; you hold a passcode.` : 'Not in use: this device logs in with a GitHub token. A login server (a free Cloudflare Worker, see worker/README.md in the private repo) keeps every secret off the browsers and lets DMs log in with a passcode.'}</p>

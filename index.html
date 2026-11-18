@@ -4,6 +4,42 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Goat Crew — DM screen</title>
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#141822" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<script>
+/* Theme, before first paint: localStorage gc_theme = system | light | dark → <html data-theme="light|dark">.
+   On System it follows the OS live. Buttons with data-theme-set="…" and #theme-toggle drive it (see dm.css). */
+(function () {
+  var KEY = 'gc_theme', root = document.documentElement, mem = 'system', timer;
+  var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null, BAR = { dark: '#141822', light: '#ffffff' };
+  function pref() { var v; try { v = localStorage.getItem(KEY); } catch (_) { v = mem; } return v === 'light' || v === 'dark' ? v : 'system'; }
+  function resolve(p) { return p === 'system' ? (mq && !mq.matches ? 'light' : 'dark') : p; }
+  function sync() {
+    var p = pref(), next = root.dataset.theme === 'dark' ? 'light' : 'dark', tg = document.getElementById('theme-toggle');
+    document.querySelectorAll('[data-theme-set]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.themeSet === p)); });
+    if (tg) { tg.title = 'Switch to ' + next + ' theme'; tg.setAttribute('aria-label', tg.title); }
+  }
+  function apply(fade) {
+    var t = resolve(pref());
+    if (fade && root.dataset.theme !== t) { root.classList.add('theme-fade'); clearTimeout(timer); timer = setTimeout(function () { root.classList.remove('theme-fade'); }, 400); }
+    root.dataset.theme = t;
+    document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) { m.content = BAR[t]; });
+    sync();
+  }
+  function set(p) { mem = p; try { localStorage.setItem(KEY, p); } catch (_) { /* private mode: keep it for this page */ } apply(true); }
+  function onSystem() { if (pref() === 'system') apply(true); }
+  window.gcTheme = { pref: pref, set: set, sync: sync, current: function () { return root.dataset.theme; } };
+  apply(false);
+  if (mq) { if (mq.addEventListener) mq.addEventListener('change', onSystem); else if (mq.addListener) mq.addListener(onSystem); }
+  addEventListener('storage', function (e) { if (e.key === KEY) apply(true); });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-theme-set], #theme-toggle'); if (!b) return;
+    set(b.id === 'theme-toggle' ? (root.dataset.theme === 'dark' ? 'light' : 'dark') : b.dataset.themeSet);
+  });
+  document.addEventListener('DOMContentLoaded', sync);
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
@@ -48,6 +84,7 @@
       <span class="brand">🐐 Goat Crew</span>
       <span id="whoami" class="muted"></span>
       <span id="live-dot" title="Live connection to the data repo">●</span>
+      <button id="theme-toggle" class="btn small ghost icon-btn" type="button" title="Switch theme" aria-label="Switch theme"><svg class="ic ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-17.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><svg class="ic ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></button>
       <button id="logout" class="btn small ghost">Log out</button>
     </header>
     <nav id="tabs">

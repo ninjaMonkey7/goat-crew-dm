@@ -139,8 +139,8 @@ function buildPlanSVG(plan) {
   // parchment: paper grain filter + cross-hatch pattern for unexplored rooms
   const defs = svgEl('defs', {}, svg);
   const hatch = svgEl('pattern', { id: 'hatch', width: 9, height: 9, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
-  svgEl('rect', { width: 9, height: 9, fill: '#d6c6a0' }, hatch);
-  svgEl('line', { x1: 0, y1: 0, x2: 0, y2: 9, stroke: '#9c8862', 'stroke-width': 1.3 }, hatch);
+  svgEl('rect', { width: 9, height: 9, class: 'plan-hatch-bg' }, hatch); // colours: --plan-* tokens in dm.css
+  svgEl('line', { x1: 0, y1: 0, x2: 0, y2: 9, class: 'plan-hatch-line', 'stroke-width': 1.3 }, hatch);
   const grain = svgEl('filter', { id: 'grain', x: 0, y: 0, width: '100%', height: '100%' }, defs);
   svgEl('feTurbulence', { type: 'fractalNoise', baseFrequency: '0.9', numOctaves: 2, stitchTiles: 'stitch' }, grain);
   svgEl('feColorMatrix', { type: 'matrix', values: '0 0 0 0 0.30 0 0 0 0 0.20 0 0 0 0 0.08 0.11 0 0 0 0' }, grain);
