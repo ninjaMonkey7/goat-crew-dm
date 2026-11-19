@@ -119,9 +119,9 @@ function apiErr(txt, status) {
 
 // ---------- the chat tab ----------
 /* Layout: the thread scrolls with the page (or the side rail); a sticky dock at the bottom holds the
-   quick-ask chips (one row, scrolls sideways) and the composer. The composer has one send action and a
-   Co-DM / Assistant switch: Enter sends to whichever is selected (Co-DM by default), Ctrl/⌘ + Enter
-   always asks the assistant, Shift + Enter is a new line. */
+   quick-ask row ("Remind me about" menu, then one-tap chips; scrolls sideways) and the composer. The composer has
+   one send action and one recipient control, "To: Co-DM / Assistant". Keys (shown in the hint): Enter sends to
+   whoever is selected (Co-DM by default), Ctrl/⌘ + Enter asks the assistant, Shift + Enter is a new line. */
 const CHAT = { mode: 'dm', draft: '' };
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 const chatScroller = () => { const log = $('#chat-log'); return (log && log.closest('#rail')) || document.scrollingElement; };
@@ -138,20 +138,22 @@ async function renderChat(c) {
       <div id="chat-log" class="chat-log" aria-live="polite"></div>
       <div class="chat-dock">
         <div class="chat-quick-wrap"><div class="chat-quick" role="toolbar" aria-label="Ask the assistant">
+          <button class="chat-chip chat-menu-btn" id="chat-who" aria-haspopup="listbox" aria-expanded="false" title="Pick a PC or NPC: who they are, what they want, two hooks">${ic('brain')} Remind me about ${ic('chev', 'chip-chev')}</button>
+          <span class="chat-quick-sep" aria-hidden="true"></span>
           <button class="chat-chip" data-q="catchup" title="Where are we, what's open, what to remember">${ic('compass')} Catch me up</button>
           <button class="chat-chip" data-q="options" title="3 ways the next scene could go">${ic('shuffle')} Options from here</button>
-          <button class="chat-chip" id="chat-who" aria-haspopup="listbox" aria-expanded="false" title="Who they are, what they want, two hooks">${ic('brain')} Remind me about… <span class="chip-caret" aria-hidden="true"></span></button>
           <button class="chat-chip" data-q="encounter">${ic('swords')} Encounter idea</button>
           <button class="chat-chip" data-q="npc">${ic('drama')} NPC on the spot</button>
           <button class="chat-chip" data-q="recap">${ic('scroll')} Recap so far</button>
         </div></div>
         <div class="composer" data-mode="${CHAT.mode}">
-          <textarea id="chat-text" rows="1" aria-label="Message"></textarea>
+          <textarea id="chat-text" rows="1" aria-label="Message" aria-describedby="chat-hint"></textarea>
           <div class="composer-bar">
-            <div class="composer-mode" role="radiogroup" aria-label="Send to">
-              <button type="button" role="radio" data-mode="dm">${ic('users')} Co-DM</button>
-              <button type="button" role="radio" data-mode="ai">${ic('bot')} Assistant</button>
-            </div>
+            <div class="composer-to"><span id="chat-to-lbl">To</span>
+              <div class="composer-mode" role="radiogroup" aria-labelledby="chat-to-lbl">
+                <button type="button" role="radio" data-mode="dm">${ic('users')} Co-DM</button>
+                <button type="button" role="radio" data-mode="ai">${ic('bot')} Assistant</button>
+              </div></div>
             <span class="composer-hint" id="chat-hint"></span>
             ${streaming
               ? `<button class="composer-send stop" id="chat-stop" title="Stop the answer" aria-label="Stop the answer">${ic('square')}</button>`
@@ -168,9 +170,10 @@ async function renderChat(c) {
     box.dataset.mode = CHAT.mode;
     box.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.mode === CHAT.mode)));
     ta.placeholder = ai ? 'Ask the assistant about the campaign…' : 'Message your co-DM…';
+    const k = s => `<span class="kbd">${s}</span>`, sep = '<i aria-hidden="true">·</i>';
     hint.innerHTML = ai
-      ? (AI.ready ? '<span class="kbd">Enter</span> asks · both DMs see the answer' : 'Needs an API key: see Settings')
-      : `<span class="kbd">Enter</span> sends · <span class="kbd">${MAC ? '⌘' : 'Ctrl'} Enter</span> asks the assistant`;
+      ? (AI.ready ? `${k('Enter')} ask${sep}${k('Shift Enter')} new line${sep}both DMs see the answer` : 'The assistant needs a key: see Settings')
+      : `${k('Enter')} send${sep}${k(MAC ? '⌘ Enter' : 'Ctrl Enter')} ask the assistant${sep}${k('Shift Enter')} new line`;
     if (send) { send.disabled = !ta.value.trim(); send.title = ai ? `Ask the assistant (Enter)` : `Send to your co-DM (Enter)`; send.setAttribute('aria-label', send.title); }
   };
   ta.value = CHAT.draft; grow(); sync();
@@ -236,12 +239,28 @@ function chatPeopleMenu(anchor, people, pick) {
   addEventListener('resize', close); addEventListener('scroll', place, true);
 }
 
+/* Assistant answers: the shared markdown renderer, then mark the ruling (a line or bullet that opens with a bold
+   "Ruling:", "Verdict:", "Pick:" …) so only it keeps full bold, and a line that is nothing but bold text as a subhead. */
+const AI_RULING = /^(ruling|rules? call|verdict|answer|short answer|bottom line|tl;?dr|pick|my pick|recommendation|call)\b/i;
+function aiMd(text) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = md(text);
+  tpl.content.querySelectorAll('.md p, .md li').forEach(el => {
+    const b = el.firstElementChild, lead = el.firstChild;
+    if (!b || b.tagName !== 'B' || lead !== b) return;
+    if (AI_RULING.test(b.textContent.trim())) el.classList.add('ruling');
+    else if (el.tagName === 'P' && el.childNodes.length === 1) el.classList.add('subhead');
+    else b.classList.add('lead'); // a "Label:" that opens a line or bullet stays medium; bold mid-sentence reads as plain text
+
+  });
+  return tpl.innerHTML;
+}
 function msgHTML(m) {
   const mine = m.user === S.me.name;
   const when = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
   if (m.kind === 'ai') return `<article class="msg ai">
       <div class="msg-head"><span class="msg-av">${ic('bot')}</span><b>Assistant</b>${m.askedBy ? `<span>for ${esc(shortName(m.askedBy))}</span>` : ''}<span class="msg-time">${when}</span></div>
-      <div class="msg-text">${md(m.text)}</div></article>`;
+      <div class="msg-text">${aiMd(m.text)}</div></article>`;
   if (m.kind === 'sys') return `<div class="msg sys">${esc(m.text)}</div>`;
   // people: your messages and every question to the assistant sit on the right in a tinted bubble
   const ask = m.kind === 'ask', right = mine || ask;
@@ -295,7 +314,7 @@ async function askAssistant(prompt, label) {
     let shown = '';
     const { text, stop } = await streamClaude({
       system: systemPrompt(snapshot), messages: [{ role: 'user', content: user }], signal: controller.signal,
-      onText: t => { shown = t; const live = streaming && streaming.el; if (live && live.isConnected) { const sc = chatScroller(), stick = sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 120; live.querySelector('.msg-text').innerHTML = md(t); live.querySelector('.msg-status').textContent = 'answering…'; if (stick) chatToBottom(); } }
+      onText: t => { shown = t; const live = streaming && streaming.el; if (live && live.isConnected) { const sc = chatScroller(), stick = sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 120; live.querySelector('.msg-text').innerHTML = aiMd(t); live.querySelector('.msg-status').textContent = 'answering…'; if (stick) chatToBottom(); } }
     });
     const final = (text || shown || '(no answer)') + (stop === 'max_tokens' ? '\n\n*(cut off at the length limit)*' : stop === 'refusal' ? '\n\n*(the model declined this one)*' : '');
     streaming = null;
@@ -386,12 +405,77 @@ ${tracker}`;
 }
 
 // ---------- settings ----------
-/* One 640px column of sections, each a card of rows (label + help on the left, control on the right).
-   Theme, assistant key, model and effort save as you change them (with a toast). Anything that reloads the
-   page or signs you in again keeps an explicit button. Players see Appearance, Your account and Shortcuts. */
+/* One 640px column of sections, each a card of rows (label + help on the left, control on the right). Plain words
+   in the rows; the technical detail lives in the "How to" disclosures. Theme, assistant key, model and effort save as
+   you change them (with a toast). Anything that reloads the page or signs you in again keeps an explicit button.
+   Players see Appearance, Your account and Tips. Dropdowns are custom 32px selects over the native <select>, which
+   stays the source of truth (its change handlers below are unchanged). */
 const stPill = (ok, yes = 'Set', no = 'Missing') => `<span class="st-pill ${ok ? 'ok' : 'no'}">${ok ? yes : no}</span>`;
 const stRow = (label, help, ctl, cls = '') => `<div class="st-row ${cls}"><div class="st-lbl"><b>${label}</b>${help ? `<span>${help}</span>` : ''}</div>${ctl ? `<div class="st-ctl">${ctl}</div>` : ''}</div>`;
-const stHowto = (title, body) => `<details class="st-howto"><summary>${ic('book')} ${title}</summary><div class="st-howto-body">${body}</div></details>`;
+const stHowto = (title, body) => `<details class="st-howto"><summary>${ic('help')} ${title}</summary><div class="st-howto-body">${body}</div></details>`;
+
+/* Custom select: a 32px button + a listbox popover, over a hidden native <select> that keeps the value and fires
+   'change' exactly as before. Keys: ↑/↓ or Enter opens, ↑/↓ moves, Enter/Space picks, Esc closes, letters jump. */
+function customSelect(sel, name) {
+  if (!sel || sel.dataset.cs) return;
+  sel.dataset.cs = '1';
+  const wrap = document.createElement('div'); wrap.className = 'csel';
+  sel.parentNode.insertBefore(wrap, sel); wrap.appendChild(sel);
+  sel.classList.add('csel-native'); sel.tabIndex = -1; sel.setAttribute('aria-hidden', 'true');
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'csel-btn'; btn.setAttribute('aria-haspopup', 'listbox'); btn.setAttribute('aria-expanded', 'false');
+  btn.innerHTML = `<span class="csel-val"></span>${ic('chev')}`;
+  wrap.appendChild(btn);
+  const paint = () => {
+    const o = sel.selectedOptions[0], txt = o ? o.textContent : '';
+    btn.querySelector('.csel-val').textContent = txt;
+    btn.setAttribute('aria-label', `${name}: ${txt}`);
+    btn.disabled = sel.disabled || !sel.options.length || !sel.value && sel.options.length === 1;
+  };
+  paint(); sel.addEventListener('change', paint);
+  let list = null;
+  const opts = () => [...list.querySelectorAll('[role="option"]')];
+  const away = e => { if (list && !list.contains(e.target) && !btn.contains(e.target)) close(); };
+  const place = () => {
+    if (!list) return;
+    const r = btn.getBoundingClientRect(), h = list.offsetHeight;
+    list.style.minWidth = r.width + 'px';
+    list.style.left = Math.max(8, Math.min(r.left, innerWidth - list.offsetWidth - 8)) + 'px';
+    list.style.top = (r.bottom + 4 + h < innerHeight - 8 ? r.bottom + 4 : Math.max(8, r.top - 4 - h)) + 'px';
+  };
+  function close(focusBtn) {
+    if (!list) return;
+    list.remove(); list = null; btn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', away, true); removeEventListener('resize', onMove); removeEventListener('scroll', onMove, true);
+    if (focusBtn) btn.focus();
+  }
+  const onMove = e => { if (!(e && e.target && list && list.contains(e.target))) close(); };
+  const choose = v => { if (sel.value !== v) { sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })); } close(true); };
+  function open() {
+    if (list || btn.disabled) return;
+    list = document.createElement('div');
+    list.className = 'pop csel-list'; list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', name);
+    list.innerHTML = [...sel.options].filter(o => !o.hidden).map(o => `<div class="pop-item ${o.selected ? 'on' : ''}" role="option" tabindex="-1" aria-selected="${o.selected}" data-v="${esc(o.value)}"><span>${esc(o.textContent)}</span>${o.selected ? ic('check', 'pop-check') : ''}</div>`).join('');
+    document.body.appendChild(list); place();
+    btn.setAttribute('aria-expanded', 'true');
+    (list.querySelector('.on') || opts()[0]).focus({ preventScroll: true });
+    list.addEventListener('click', e => { const o = e.target.closest('[role="option"]'); if (o) choose(o.dataset.v); });
+    list.addEventListener('keydown', e => {
+      const xs = opts(), i = xs.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); (xs[i + 1] || xs[i] || xs[0]).focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); (xs[i - 1] || xs[0]).focus(); }
+      else if (e.key === 'Home') { e.preventDefault(); xs[0].focus(); }
+      else if (e.key === 'End') { e.preventDefault(); xs[xs.length - 1].focus(); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (xs[i]) choose(xs[i].dataset.v); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); }
+      else if (e.key === 'Tab') close();
+      else if (e.key.length === 1) { const hit = xs.find((x, j) => j > i && x.textContent.trim().toLowerCase().startsWith(e.key.toLowerCase())) || xs.find(x => x.textContent.trim().toLowerCase().startsWith(e.key.toLowerCase())); if (hit) hit.focus(); }
+    });
+    document.addEventListener('pointerdown', away, true); addEventListener('resize', onMove); addEventListener('scroll', onMove, true);
+  }
+  btn.addEventListener('click', () => (list ? close() : open()));
+  btn.addEventListener('keydown', e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); open(); } });
+}
 
 async function renderSettings(c) {
   const setup = await api('/api/setup');
@@ -404,15 +488,16 @@ async function renderSettings(c) {
   const sec = (title, body, id = '') => `<section class="st-sec"${id ? ` id="${id}"` : ''}><h3 class="st-h">${title}</h3><div class="st-card">${body}</div></section>`;
   const key = (keys, what) => `<div class="st-key"><span>${what}</span><span class="st-keys">${keys.map(k => `<span class="kbd">${k}</span>`).join('')}</span></div>`;
   const tip = (where, what) => `<div class="st-key st-tip"><span><b>${where}</b> ${what}</span></div>`;
+  const testable = worker ? !!setup.assistantOnServer : true;
 
   c.innerHTML = `<div class="st">
-    <div class="st-top"><h2>${ic('settings')} Settings</h2><p class="muted">Saved in this browser only.</p></div>
+    <div class="st-top"><h2>Settings</h2><p class="muted">Saved in this browser only.</p></div>
 
-    ${sec('Appearance', stRow('Theme', 'System follows this device. The sun / moon button in the header flips it any time.',
+    ${sec('Appearance', stRow('Theme', 'System follows this device.',
       `<div class="segmented" role="group" aria-label="Theme">${[['system', 'monitor', 'System'], ['light', 'sun', 'Light'], ['dark', 'moon', 'Dark']].map(([v, i, l]) => `<button type="button" data-theme-set="${v}" aria-pressed="${v === themePref}">${ic(i)} ${l}</button>`).join('')}</div>`))}
 
     ${sec('Your account', `
-      ${stRow('Signed in as', '', `<span class="st-who">${esc(S.me.name)} <span class="role-pill role-${esc(S.me.role)}">${esc(roleName)}</span></span>`)}
+      ${stRow('Signed in as', '', `<span class="st-who">${esc(shortName(S.me.name) || S.me.name)} <span class="role-pill role-${esc(S.me.role)}">${esc(roleName)}</span></span>`)}
       ${worker ? `<div class="st-row st-col">
           <div class="st-lbl"><b>Change password</b><span>At least 8 characters.</span></div>
           <div class="st-fields">
@@ -420,86 +505,114 @@ async function renderSettings(c) {
             <input id="st-pw-new" type="password" autocomplete="new-password" placeholder="New password" aria-label="New password">
             <input id="st-pw-new2" type="password" autocomplete="new-password" placeholder="New password again" aria-label="New password again">
             <div class="st-actions"><span class="err" id="st-pw-err"></span><button class="btn primary" id="st-pw-save">Change password</button></div>
-          </div></div>`
-        : stRow('Password', 'Not used here: this device signs in with a GitHub token.' + (staff ? ' Personal passwords and player logins come with the login server (Advanced, below).' : ''), '')}
-      ${stRow('Forget this device', staff ? 'Removes the GitHub token, API key, login server and session from this browser.' : 'Signs you out and clears your settings from this browser.', '<button class="btn danger" id="st-forget">Forget…</button>')}`)}
+          </div></div>` : ''}
+      ${stRow('Forget this device', staff ? 'Signs you out and removes your saved keys from this browser.' : 'Signs you out and clears your settings from this browser.', '<button class="btn danger" id="st-forget">Forget…</button>')}`)}
 
     ${staff ? `
     ${sec('Assistant', `
-      ${worker
-        ? stRow(`API key ${stPill(setup.assistantOnServer, 'Configured', 'Not configured')}`, 'Held by the login server, not this browser.', '')
-        : stRow(`Anthropic API key <span id="st-aikey-pill">${stPill(!!AI.key)}</span>`, 'Your own key. It stays in this browser and is only sent to Anthropic.',
-          `<input id="st-aikey" type="password" autocomplete="off" spellcheck="false" placeholder="${AI.key ? 'Saved — paste to replace' : 'sk-ant-…'}">`)}
-      ${stRow('Model', '', `<select id="st-model">${AI_MODELS.map(([v, l]) => `<option value="${v}" ${v === AI.model ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
-      ${stRow('Effort', 'How long it thinks before answering.', `<select id="st-effort">${['low', 'medium', 'high'].map(v => `<option value="${v}" ${v === AI.effort ? 'selected' : ''}>${v[0].toUpperCase() + v.slice(1)}</option>`).join('')}</select>`)}
+      <div class="st-row">
+        <div class="st-lbl"><b>${worker ? 'Assistant key' : 'Anthropic key'} <span id="st-aikey-pill">${worker ? stPill(setup.assistantOnServer, 'Shared', 'Not set up') : stPill(!!AI.key)}</span></b>
+          <span>${worker ? 'Shared by every DM. It is kept on the sign-in service, not in this browser.' : 'Your own key. It stays in this browser and is only sent to Anthropic.'}</span>
+          <span class="st-test" id="st-aitest-out" role="status" aria-live="polite"></span></div>
+        <div class="st-ctl"><div class="st-keyrow">
+          ${worker ? '' : `<input id="st-aikey" type="password" autocomplete="off" spellcheck="false" placeholder="${AI.key ? 'Paste to replace' : 'sk-ant-…'}" aria-label="Anthropic key">`}
+          ${testable ? `<button class="btn" id="st-aitest" type="button" ${worker || AI.key ? '' : 'disabled'} title="Send a tiny test question with this key">Test</button>` : ''}
+        </div></div>
+      </div>
+      ${stRow('Model', 'Opus is the most capable. Haiku answers fastest.', `<select id="st-model" aria-label="Model">${AI_MODELS.map(([v, l]) => `<option value="${v}" ${v === AI.model ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
+      ${stRow('Effort', 'How long it thinks before answering.', `<select id="st-effort" aria-label="Effort">${['low', 'medium', 'high'].map(v => `<option value="${v}" ${v === AI.effort ? 'selected' : ''}>${v[0].toUpperCase() + v.slice(1)}</option>`).join('')}</select>`)}
       <div class="st-foot">${worker
-        ? stHowto('How to turn it on', '<p>Add <code>ANTHROPIC_API_KEY</code> as a secret on the login server (the Cloudflare Worker). Every DM then shares it and no key reaches a browser.</p>')
-        : stHowto('How to get a key', '<ol><li>Sign in at <b>console.anthropic.com</b>.</li><li>Open <b>API keys</b> and create a key.</li><li>Paste it above. It saves when you leave the field.</li></ol><p>Each DM uses their own key.</p>')}</div>`, 'st-ai')}
+        ? stHowto('How to set it up', '<p>Whoever runs the sign-in service adds an <code>ANTHROPIC_API_KEY</code> secret to it (it is a Cloudflare Worker). Every DM then shares that key, and no key reaches a browser.</p>')
+        : stHowto('How to get a key', '<ol><li>Sign in at <b>console.anthropic.com</b>.</li><li>Open <b>API keys</b> and create a key.</li><li>Paste it above. It saves when you leave the box. Press <b>Test</b> to check it.</li></ol><p>Each DM uses their own key.</p>')}</div>`, 'st-ai')}
 
-    ${worker ? '' : sec('Campaign data (GitHub)', `
-      ${stRow(`Access token ${stPill(setup.hasToken)}`, 'Lets this browser read and write the data repo.',
-        `<input id="st-ghtoken" type="password" autocomplete="off" spellcheck="false" placeholder="${setup.hasToken ? 'Saved — paste to replace' : 'github_pat_…'}">`)}
-      <div class="st-row st-col">
-        <div class="st-lbl"><b>Data repo</b><span>Owner, repository and branch.</span></div>
+    ${worker ? '' : sec('Campaign data', `
+      ${stRow(`Access key ${stPill(setup.hasToken)}`, 'Lets this browser open and save the campaign.',
+        `<input id="st-ghtoken" type="password" autocomplete="off" spellcheck="false" placeholder="${setup.hasToken ? 'Saved · paste to replace' : 'github_pat_…'}" aria-label="Access key">`)}
+      <details class="st-row st-col st-more">
+        <summary class="st-lbl"><b>Where it's stored <span class="st-loc">${esc(setup.owner)}/${esc(setup.repo)}</span></b><span>Only change this if the campaign moves.</span></summary>
         <div class="st-repo">
           <input id="st-owner" value="${esc(setup.owner)}" placeholder="owner" aria-label="Owner" spellcheck="false"><span class="st-sep">/</span>
           <input id="st-repo" value="${esc(setup.repo)}" placeholder="repository" aria-label="Repository" spellcheck="false"><span class="st-sep">@</span>
           <input id="st-branch" value="${esc(setup.branch)}" placeholder="branch" aria-label="Branch" spellcheck="false">
         </div>
-      </div>
-      <div class="st-foot">${stHowto('How to make a token', '<ol><li>On github.com open <b>Settings → Developer settings → Fine-grained tokens</b>.</li><li>Give it access to <b>only the data repo</b>.</li><li>Under <b>Repository permissions</b> set <b>Contents</b> to <b>Read and write</b>.</li><li>Paste it above and press <b>Save &amp; reload</b>.</li></ol>')}
+      </details>
+      <div class="st-foot">${stHowto('How to make an access key', '<p>The campaign lives in a private GitHub repository. The access key is a GitHub <b>fine-grained token</b> for it:</p><ol><li>On github.com open <b>Settings → Developer settings → Fine-grained tokens</b>.</li><li>Give it access to <b>only the campaign repository</b>.</li><li>Under <b>Repository permissions</b> set <b>Contents</b> to <b>Read and write</b>.</li><li>Paste it above and press <b>Save &amp; reload</b>.</li></ol>')}
         <button class="btn primary" id="st-gh-save" disabled>Save &amp; reload</button></div>`)}
 
     ${sec(worker ? 'People & access' : 'Invite your co-DM', worker
       ? stRow('People', admin ? 'Add players and DMs, choose what each person can open, send sign-in links and reset passwords.' : 'Your admin adds people and sends sign-in links. Ask them if someone needs a login.',
-        admin ? `<button class="btn" id="st-open-admin">${ic('shield')} Open Admin</button>` : '')
+        admin ? `<button class="btn" id="st-open-admin">${ic('shield')} Open People &amp; access</button>` : '')
       : `<div class="st-row st-col">
-          <div class="st-lbl"><b>Invite link</b><span>Signs your co-DM in on their own device. It carries <b>this device's GitHub token</b>, so send it privately.</span></div>
+          <div class="st-lbl"><b>Invite link</b><span>Signs your co-DM in on their own device, no account needed. It carries <b>this browser's access key</b>, so send it privately.</span></div>
           <div class="st-invite"><select id="st-invite-user" aria-label="Sign them in as">${otherDMs.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('') || '<option value="">No other DM yet</option>'}</select>
             <button class="btn" id="st-invite" ${setup.hasToken && otherDMs.length ? '' : 'disabled'}>${ic('link')} Copy invite link</button></div>
           <div class="muted st-out" id="st-invite-out"></div>
         </div>
-        <div class="st-foot">${stHowto('How invite links work', '<p>They open the link once and they\'re in, as the DM you picked: no GitHub account or token of their own. Don\'t post it in a group chat. To cut access later, revoke the token on GitHub.</p>')}</div>`)}
+        <div class="st-foot">${stHowto('How invite links work', '<p>They open the link once and they\'re in, as the DM you picked, with no GitHub account of their own. Don\'t post it in a group chat. To cut access later, delete the access key on GitHub.</p>')}</div>`)}
     ` : ''}
 
     ${sec(staff ? 'Shortcuts' : 'Tips', (staff ? `
       ${key(['N'], 'Next turn, while the Battle panel is showing')}
       ${key(['/'], 'Jump to the chat box')}
-      ${key(['Esc'], 'Close the map panel, or leave a field')}
-      ${key(['Enter'], 'DM Chat: send to your co-DM (or the assistant, when it is selected)')}
+      ${key(['['], 'Collapse or expand the sidebar')}
+      ${key(['Esc'], 'Close a menu or the map panel, or leave a field')}
+      ${key(['Enter'], 'DM Chat: send to whoever is selected in To')}
       ${key([mod, 'Enter'], 'DM Chat: ask the assistant')}
-      ${tip('Battle', 'Click an HP chip to type a value (12, 12/30, −7). Add monsters from the DM tab.')}
+      ${key(['Shift', 'Enter'], 'DM Chat: new line')}
+      ${tip('Battle', 'Click an HP chip to type a value (12, 12/30, −7). Add monsters from Prep &amp; tools.')}
       ${tip('Map', 'Tap a room for notes. <b>Party moves here</b> is what your co-DM sees.')}`
       : `${tip('Party', 'Tap your character to update HP, gold and conditions.')}
       ${tip('Dice', 'Roll from the Dice tab. Everyone at the table sees the result.')}
       ${tip('Battle map', 'Shows the fight as the DMs reveal it.')}`) +
-      '<div class="st-note">Live updates check for changes every 4 s. A green dot in the header means connected.</div>')}
+      '<div class="st-note">Changes from the rest of the table arrive on their own. <b>Synced</b> in the top bar means it is up to date; hover it to see when it last checked.</div>')}
 
     ${staff ? `
     <details class="st-sec st-adv">
-      <summary class="st-h">Advanced <span class="st-pill ${worker ? 'ok' : 'off'}">${worker ? 'Login server on' : 'Login server off'}</span></summary>
+      <summary class="st-h">Advanced <span class="st-pill ${worker ? 'ok' : 'off'}">${worker ? 'Sign-in service on' : 'Sign-in service off'}</span></summary>
       <div class="st-card">
         <div class="st-row st-col">
-          <div class="st-lbl"><b>Login server</b><span>${worker ? `This device signs in through <b>${esc(setup.worker)}</b>${setup.workerFromConfig ? ' (set in the site config)' : ''}. It holds the GitHub token and the assistant key, and decides who can see what.` : 'Not in use. This device signs in with a GitHub token, which can read everything.'}</span></div>
-          <input id="st-worker" value="${esc(setup.worker || '')}" placeholder="https://….workers.dev" spellcheck="false" aria-label="Login server URL">
+          <div class="st-lbl"><b>Sign-in service</b><span>${worker ? `This device signs in through <b>${esc(setup.worker)}</b>${setup.workerFromConfig ? ' (set in the site config)' : ''}. It holds the keys and decides who can see what.` : 'Off. Turn it on to give everyone their own password, players included.'}</span></div>
+          <input id="st-worker" value="${esc(setup.worker || '')}" placeholder="https://….workers.dev" spellcheck="false" aria-label="Sign-in service address">
         </div>
-        <div class="st-foot">${stHowto('What is a login server?', '<p>A free Cloudflare Worker (see <code>worker/README.md</code> in the private repo). It keeps every secret off the browsers and turns on passwords, sign-in links and player logins.</p>')}
-          <span class="st-btns">${worker ? '<button class="btn" id="st-worker-off">Use a GitHub token instead</button>' : ''}<button class="btn primary" id="st-worker-save" disabled>Save &amp; sign in again</button></span></div>
+        <div class="st-foot">${stHowto('What is the sign-in service?', '<p>A small, free Cloudflare Worker you host yourself (setup steps: <code>worker/README.md</code> in the private repository). It keeps every key off the browsers and adds passwords, sign-in links and player logins.</p>')}
+          <span class="st-btns">${worker ? '<button class="btn" id="st-worker-off">Use an access key instead</button>' : ''}<button class="btn primary" id="st-worker-save" disabled>Save &amp; sign in again</button></span></div>
       </div>
     </details>` : ''}
   </div>`;
 
   const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
+  customSelect($('#st-model'), 'Model'); customSelect($('#st-effort'), 'Effort'); customSelect($('#st-invite-user'), 'Sign them in as');
   // assistant: saves as you go
-  const aikey = $('#st-aikey');
+  const aikey = $('#st-aikey'), aitest = $('#st-aitest'), aiOut = $('#st-aitest-out');
+  const saveKey = () => {
+    const k = aikey && aikey.value.trim(); if (!k) return false;
+    localStorage.setItem('gc_ai_key', k); aikey.value = ''; aikey.placeholder = 'Paste to replace';
+    $('#st-aikey-pill').innerHTML = stPill(true); if (aitest) aitest.disabled = false;
+    if (aiOut) { aiOut.className = 'st-test'; aiOut.textContent = ''; }
+    return true;
+  };
   if (aikey) {
     aikey.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); aikey.blur(); } });
-    aikey.addEventListener('change', () => {
-      const k = aikey.value.trim(); if (!k) return;
-      localStorage.setItem('gc_ai_key', k); aikey.value = ''; aikey.placeholder = 'Saved — paste to replace';
-      $('#st-aikey-pill').innerHTML = stPill(true); toast('API key saved');
-    });
+    aikey.addEventListener('input', () => { if (aitest) aitest.disabled = !(aikey.value.trim() || AI.key); });
+    aikey.addEventListener('change', () => { if (saveKey()) toast('Key saved'); });
   }
+  // Test: one tiny request through the same call the chat uses; the answer itself is thrown away
+  if (aitest) aitest.onclick = async () => {
+    saveKey();
+    if (!AI.ready) { aiOut.className = 'st-test no'; aiOut.innerHTML = `${ic('alert')} Paste a key first.`; return; }
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 20000);
+    aitest.disabled = true; aiOut.className = 'st-test busy'; aiOut.innerHTML = `${ic('spinner')} Checking…`;
+    try {
+      await streamClaude({ system: 'Connection test. Reply with the single word OK.', messages: [{ role: 'user', content: 'Test' }], onText: () => {}, signal: ctl.signal, maxTokens: 16 });
+      const model = (AI_MODELS.find(([v]) => v === AI.model) || [, AI.model])[1].replace(/\s*\(.*\)$/, '');
+      aiOut.className = 'st-test ok'; aiOut.innerHTML = `${ic('okcircle')} Works. ${esc(model)} answered at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+      if (!worker) $('#st-aikey-pill').innerHTML = stPill(true, 'Working');
+    } catch (e) {
+      aiOut.className = 'st-test no';
+      aiOut.innerHTML = `${ic('alert')} ${esc(e.name === 'AbortError' ? 'No answer after 20 seconds. Check the connection and try again.' : (e.message || 'It didn\'t work.'))}`;
+      if (!worker && /401|rejected|invalid|authentication/i.test(e.message || '')) $('#st-aikey-pill').innerHTML = stPill(false, '', 'Rejected');
+    } finally { clearTimeout(timer); aitest.disabled = false; }
+  };
   const model = $('#st-model'), effort = $('#st-effort');
   if (model) model.onchange = () => { localStorage.setItem('gc_ai_model', model.value); toast('Model saved: ' + model.selectedOptions[0].textContent.replace(/\s*\(.*\)$/, '')); };
   if (effort) effort.onchange = () => { localStorage.setItem('gc_ai_effort', effort.value); toast('Effort saved: ' + effort.selectedOptions[0].textContent); };
@@ -524,7 +637,7 @@ async function renderSettings(c) {
     const id = $('#st-invite-user').value; if (!id) return;
     const link = `${location.origin}${location.pathname}#token=${encodeURIComponent(TOKEN)}&user=${encodeURIComponent(id)}`;
     const out = $('#st-invite-out');
-    try { await navigator.clipboard.writeText(link); out.textContent = `Copied. It signs in as ${$('#st-invite-user').selectedOptions[0].textContent} and carries your token: send it privately.`; toast('Invite link copied'); }
+    try { await navigator.clipboard.writeText(link); out.textContent = `Copied. It signs in as ${$('#st-invite-user').selectedOptions[0].textContent} and carries your access key: send it privately.`; toast('Invite link copied'); }
     catch (_) { out.textContent = link; toast('Clipboard blocked: copy the link below', 4000); }
   });
   on('st-pw-save', async () => {
@@ -535,5 +648,5 @@ async function renderSettings(c) {
     try { await api('/api/me/password', { method: 'POST', body: { current: cur, next: a } }); ['st-pw-cur', 'st-pw-new', 'st-pw-new2'].forEach(i => { $('#' + i).value = ''; }); toast('Password changed'); }
     catch (e) { err.textContent = e.message || 'Could not change it'; }
   });
-  on('st-forget', () => { if (!confirm('Remove the GitHub token, API key, login server and session from this browser?')) return; ['gc_gh_token', 'gc_gh_repo', 'gc_ai_key', 'gc_ai_model', 'gc_ai_effort', 'gc_session', 'gc_user', 'gc_worker', 'gc_wsession', 'gc_wassistant', 'gc_pin'].forEach(k => localStorage.removeItem(k)); location.reload(); });
+  on('st-forget', () => { if (!confirm('Sign out and remove your saved keys and settings from this browser?')) return; ['gc_gh_token', 'gc_gh_repo', 'gc_ai_key', 'gc_ai_model', 'gc_ai_effort', 'gc_session', 'gc_user', 'gc_worker', 'gc_wsession', 'gc_wassistant', 'gc_pin'].forEach(k => localStorage.removeItem(k)); location.reload(); });
 }
