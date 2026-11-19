@@ -293,6 +293,38 @@ function keepCombatantIds(next, cur) {
   return next;
 }
 
+/* ---------- turn order: one rule for the Battle tab, the DM tab, the battle map and the TV ----------
+   encounterOrder(enc) -> indices into enc.combatants, first to act first. enc.turn stays an index into
+   enc.combatants (whoever's turn it is); the one after them is order[(order.indexOf(enc.turn) + 1) % n].
+   1. Initiative, highest first.
+   2. The DM's order within a tie: a numeric `tie` (lower first) that the Battle tab writes on every tied
+      combatant when it saves. A list already in initiative order (any encounter the DM has saved; the
+      players' copy, which has no `tie`) keeps its ties where they are.
+   3. Otherwise encounterTieCmp: Dex, then PCs before everyone else, then name.
+   4. The array position, so the result is the same on every page, every time. */
+const ENC_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+/* Natural order of two combatants on the same initiative. Dex comes from the bestiary on pages that load it
+   (not the TV). A PC's Dex usually isn't recorded, so PCs go ahead of monsters; anyone else unknown goes last. */
+function encounterTieCmp(a, b) {
+  const dex = x => {
+    const m = x && x.monster && typeof BESTIARY !== 'undefined' && Array.isArray(BESTIARY) ? BESTIARY.find(e => e.id === x.monster) : null;
+    return m && Number.isFinite(Number(m.dex)) ? Number(m.dex) : x && x.characterId ? Infinity : -Infinity;
+  };
+  const da = dex(a), db = dex(b);
+  if (da !== db) return da > db ? -1 : 1;
+  return ((b && b.characterId ? 1 : 0) - (a && a.characterId ? 1 : 0)) || ENC_COLLATOR.compare(String((a && a.name) || ''), String((b && b.name) || ''));
+}
+function encounterOrder(enc) {
+  const list = enc && Array.isArray(enc.combatants) ? enc.combatants : [];
+  const init = x => Number(x && x.init) || 0;
+  const tie = x => (x && x.tie !== undefined && x.tie !== null && x.tie !== '' && Number.isFinite(Number(x.tie))) ? Number(x.tie) : Infinity;
+  const saved = list.every((x, i) => !i || init(list[i - 1]) >= init(x));
+  return list.map((_, i) => i).sort((i, j) => {
+    const a = list[i], b = list[j], ta = tie(a), tb = tie(b);
+    return (init(b) - init(a)) || (ta === tb ? 0 : ta < tb ? -1 : 1) || (saved ? 0 : encounterTieCmp(a, b)) || i - j;
+  });
+}
+
 // ---------- dice (client-side RNG) ----------
 const die = n => 1 + Math.floor(Math.random() * n);
 function rollDice(formula, mode) {
