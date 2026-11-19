@@ -18,7 +18,8 @@ function toast(msg, ms = 2200) {
 function md(src) {
   if (!src) return '';
   const lines = String(src).split('\n');
-  let out = [], para = [], inList = null, inQuote = false, inTable = false;
+  /* lists: a stack of open lists, one per indent level, so "  - sub" nests inside the item above it */
+  let out = [], para = [], lists = [], inQuote = false, inTable = false;
   const inline = s => esc(s)
     .replace(/\*\*\*(.+?)\*\*\*/g, '<b><i>$1</i></b>')
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
@@ -27,9 +28,19 @@ function md(src) {
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
     .replace(/&lt;span\b.*?&gt;/g, '').replace(/&lt;\/span&gt;/g, '');
   const flushPara = () => { if (para.length) { out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; } };
+  const closeList = () => { while (lists.length) out.push(`</li></${lists.pop().type}>`); };
+  const listItem = (indent, type, text) => {
+    flushPara();
+    while (lists.length && lists[lists.length - 1].indent > indent) out.push(`</li></${lists.pop().type}>`);
+    const top = lists[lists.length - 1];
+    if (!top || indent > top.indent) { out.push(`<${type}>`); lists.push({ type, indent }); }
+    else if (top.type !== type) { out.push(`</li></${top.type}><${type}>`); top.type = type; }
+    else out.push('</li>');
+    out.push('<li>' + inline(text));
+  };
   const closeAll = () => {
     flushPara();
-    if (inList) { out.push(inList === 'ul' ? '</ul>' : '</ol>'); inList = null; }
+    closeList();
     if (inQuote) { out.push('</blockquote>'); inQuote = false; }
     if (inTable) { out.push('</table>'); inTable = false; }
   };
@@ -48,22 +59,17 @@ function md(src) {
     }
     if (inTable) { out.push('</table>'); inTable = false; }
     if ((m = line.match(/^\s*>\s?(.*)$/))) {
-      flushPara(); if (inList) { out.push(inList === 'ul' ? '</ul>' : '</ol>'); inList = null; }
+      flushPara(); closeList();
       if (!inQuote) { out.push('<blockquote>'); inQuote = true; }
       if (m[1].trim()) out.push('<p>' + inline(m[1].replace(/^[-*]\s+/, '')) + '</p>');
       continue;
     }
     if (inQuote) { out.push('</blockquote>'); inQuote = false; }
-    if ((m = line.match(/^\s*[-*+]\s+(.*)$/))) {
-      flushPara(); if (inList !== 'ul') { if (inList) out.push('</ol>'); out.push('<ul>'); inList = 'ul'; }
-      out.push('<li>' + inline(m[1]) + '</li>'); continue;
-    }
-    if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
-      flushPara(); if (inList !== 'ol') { if (inList) out.push('</ul>'); out.push('<ol>'); inList = 'ol'; }
-      out.push('<li>' + inline(m[1]) + '</li>'); continue;
-    }
-    if (inList && /^\s{2,}/.test(raw)) { out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, '<br>' + inline(line.trim()) + '</li>'); continue; }
-    if (inList) { out.push(inList === 'ul' ? '</ul>' : '</ol>'); inList = null; }
+    const indentOf = s => s.replace(/\t/g, '    ').length;
+    if ((m = line.match(/^(\s*)[-*+]\s+(.*)$/))) { listItem(indentOf(m[1]), 'ul', m[2]); continue; }
+    if ((m = line.match(/^(\s*)\d+[.)]\s+(.*)$/))) { listItem(indentOf(m[1]), 'ol', m[2]); continue; }
+    if (lists.length && /^\s{2,}/.test(raw)) { out.push('<br>' + inline(line.trim())); continue; }
+    closeList();
     para.push(line);
   }
   closeAll();
@@ -593,58 +599,155 @@ async function renderQuests(c) {
 const shortName = u => String(u || '').replace(/\s*\((player|dm|co-dm)\)\s*$/i, '');
 
 // ---------- BATTLE ----------
+/* Initiative tracker. Fixed columns: init · avatar · name/stats · −5 −1 · HP (64px) · +1 +5 · stat block.
+   The ± steppers show on hover / focus (always on touch screens); the HP chip is click-to-edit.
+   UI-only state (selected row, open stat blocks) survives the live re-renders. */
+const BT = { sel: null, open: new Set(), ro: null };
+const BT_NARROW = 560; // px of card width below which the row layout folds (phone, side rail)
+const btKey = (x, i) => String(x.id || i);
+/* HP: unknown when there is no max (and nothing recorded); otherwise a tone by the remaining fraction */
+function btHp(x) {
+  const hp = Number(x.hp) || 0, max = Number(x.maxHp) || 0;
+  if (max <= 0) return { known: hp > 0, hp, max: 0, pct: hp > 0 ? 100 : 0, tone: 'unk' };
+  const pct = Math.max(0, Math.min(100, Math.round(100 * hp / max)));
+  return { known: true, hp, max, pct, tone: hp <= 0 ? 'dead' : pct <= 25 ? 'low' : pct <= 50 ? 'mid' : 'ok' };
+}
+function btHpInner(x) {
+  const h = btHp(x);
+  if (!h.known) return `<span class="bt-hp-val">—</span><span class="bt-hp-bar"></span>`;
+  return `<span class="bt-hp-val">${h.hp}${h.max ? `<small>/${h.max}</small>` : ''}</span><span class="bt-hp-bar">${h.max ? `<i style="width:${h.pct}%"></i>` : ''}</span>`;
+}
+function btPaintHp(btn, x) {
+  const h = btHp(x);
+  btn.className = `bt-hp t-${h.tone}`;
+  btn.innerHTML = btHpInner(x);
+  btn.setAttribute('aria-label', `HP ${h.known ? h.hp + (h.max ? ' of ' + h.max : '') : 'unknown'}. Click to set`);
+}
+function btAvatar(x, ch, isDM) {
+  // players' copy of the encounter has no monster ids, so their non-PC rows stay neutral
+  const side = x.characterId ? 'pc' : x.monster ? 'foe' : isDM ? 'npc' : 'other';
+  const name = String(x.name || '?').trim();
+  if (ch && ch.portrait) return `<span class="bt-av ${side}"><img src="${esc(ch.portrait)}" alt="" loading="lazy"></span>`;
+  return `<span class="bt-av ${side}" aria-hidden="true">${esc((name[0] || '?').toUpperCase())}</span>`;
+}
+
 async function renderBattle(c) {
   const enc = await load('encounter');
   const isDM = isStaff(S.me);
   const combatants = enc.combatants || [];
   if (!combatants.length) {
-    c.innerHTML = `<div class="card"><h3>${ic('swords')} Battle</h3>
+    c.innerHTML = `<div class="card bt-empty"><h3>${ic('swords')} Battle</h3>
       <p class="muted">No encounter running.${isDM ? ' Build one on the DM tab (+ Monster, + Add whole party), then run it from here.' : ' The moment the DM rolls initiative, the turn order shows up here — live.'}</p>
       ${isDM ? '<button class="btn dm" id="to-dm">Open the encounter tracker</button>' : ''}</div>`;
     if (isDM) $('#to-dm').onclick = () => { S.tab = 'dm'; localStorage.setItem('gc_tab', 'dm'); render(); };
     return;
   }
   const chars = await load('characters');
+  const charOf = x => x.characterId ? chars.find(ch => ch.id === x.characterId) : null;
   const myId = S.me.characterId;
   const myChar = chars.find(x => x.id === myId);
   const myName = myChar ? myChar.name : '';
-  const turn = enc.turn || 0;
+  const turn = Math.min(enc.turn || 0, combatants.length - 1);
   const active = combatants[turn] || null;
   const mineRow = x => (myId && x.characterId === myId);
   const activeIsMine = !isDM && active && (mineRow(active) || (myName && active.name && myName.toLowerCase().startsWith(String(active.name).toLowerCase())));
   const mon = x => (isDM && x.monster && typeof BESTIARY !== 'undefined') ? BESTIARY.find(b => b.id === x.monster) : null;
+  const nextUp = combatants.length > 1 ? combatants[(turn + 1) % combatants.length] : null;
+  const keys = combatants.map(btKey);
+  if (BT.sel && !keys.includes(BT.sel)) BT.sel = null;
   c.innerHTML = `
-    <div class="card">
-      <div class="row spread"><h3 style="margin:0">${ic('swords')} Round ${enc.round || 1} <span class="muted" style="font-weight:400;font-size:14px">· ${esc(active ? active.name : '')}'s turn</span></h3>
-        ${isDM ? `<span class="row"><button class="btn small" id="b-prev" title="Previous turn" aria-label="Previous turn">${ic('skipback')}</button><button class="btn small primary" id="b-next" title="Next turn (N)">${ic('play')} Next turn</button><span class="badge dm">DM view</span></span>` : '<span class="badge cat">live</span>'}</div>
+    <div class="card bt ${isDM ? 'bt-dm' : 'bt-player'} ${c.clientWidth < BT_NARROW ? 'bt-narrow' : ''}">
+      <div class="bt-head">
+        <div class="bt-title">
+          <span class="bt-round">Round <b>${enc.round || 1}</b></span>
+          <span class="bt-now">${active ? `<span><b>${esc(active.name || '—')}</b>'s turn</span>` : ''}${nextUp ? `<span class="bt-next muted">Next: ${esc(nextUp.name || '—')}</span>` : ''}</span>
+        </div>
+        ${isDM ? `<div class="bt-actions">
+            <span class="bt-view" title="You see HP and stat blocks; players see the order only">${ic('eye')} DM view</span>
+            <button class="btn small icon-btn" id="b-prev" title="Previous turn" aria-label="Previous turn">${ic('skipback')}</button>
+            <button class="btn small primary" id="b-next" title="Next turn (N)">${ic('play')} Next turn <kbd class="bt-kbd">N</kbd></button>
+          </div>` : `<span class="bt-live"><i></i>Live</span>`}
+      </div>
       ${activeIsMine ? `<div class="your-turn">${ic('swords')} YOUR TURN</div>` : ''}
-      <div class="init-list">
+      <div class="bt-list" role="list">
         ${combatants.map((x, i) => {
+          const k = btKey(x, i);
           const down = x.down ?? (Number(x.maxHp) > 0 && Number(x.hp) <= 0);
           const m = mon(x);
-          const pct = Number(x.maxHp) > 0 ? Math.max(0, Math.min(100, Math.round(100 * Number(x.hp || 0) / Number(x.maxHp)))) : 0;
-          return `<div class="init-row ${i === turn ? 'turn' : ''} ${mineRow(x) ? 'mine' : ''} ${down ? 'down' : ''}">
-            <span class="init-num">${x.init ?? '—'}</span>
-            <span class="init-name">${down ? ic('skull', 'ic-red') + ' ' : ''}${esc(x.name || '—')}${mineRow(x) ? ' <span class="badge cat">you</span>' : ''}
-              ${isDM && x.notes ? `<div class="init-notes muted">${esc(x.notes)}</div>` : ''}</span>
-            ${isDM ? `<span class="init-hp-ctl">
-                <button class="btn small" data-hp="-5" data-i="${i}">−5</button><button class="btn small" data-hp="-1" data-i="${i}">−1</button>
-                <span class="init-hp ${down ? 'low' : ''}" style="--hp:${pct}%">${x.hp ?? '?'}${x.maxHp ? '/' + x.maxHp : ''}</span>
-                <button class="btn small" data-hp="1" data-i="${i}">+1</button><button class="btn small" data-hp="5" data-i="${i}">+5</button>
-                ${m ? `<button class="btn small dm" data-stat="${i}" title="Stat block" aria-label="Stat block">${ic('book')}</button>` : ''}
-              </span>` : (x.maxHp && isDM ? `<span class="init-hp ${down ? 'low' : ''}">${x.hp ?? '?'}/${x.maxHp}</span>` : '<span></span>')}
-          </div>${m ? `<div class="statblock hidden" data-statblock="${i}">${statBlockHTML(m)}</div>` : ''}`;
+          // the avatar ring already says "PC", so a bare "PC" note is dropped
+          const notes = isDM && x.notes && !(x.characterId && /^\s*pc\s*$/i.test(x.notes)) ? String(x.notes) : '';
+          const cls = ['bt-row', i === turn ? 'turn' : '', mineRow(x) ? 'mine' : '', down ? 'down' : '', BT.sel === k ? 'sel' : ''].filter(Boolean).join(' ');
+          return `<div class="${cls}" role="listitem" data-row="${i}" ${i === turn ? 'aria-current="true"' : ''}>
+            <span class="bt-init" title="Initiative">${x.init ?? '—'}</span>
+            ${btAvatar(x, charOf(x), isDM)}
+            <span class="bt-who">
+              <span class="bt-name">${down ? ic('skull', 'ic-red') : ''}<span class="bt-name-t">${esc(x.name || '—')}</span>${mineRow(x) ? '<span class="bt-you">you</span>' : ''}</span>
+              ${notes ? `<span class="bt-notes" title="${esc(notes)}" data-notes>${esc(notes)}</span>` : ''}
+            </span>
+            ${isDM ? `
+            <span class="bt-step bt-minus"><button class="bt-pm" data-hp="-5" data-i="${i}" aria-label="−5 HP">−5</button><button class="bt-pm" data-hp="-1" data-i="${i}" aria-label="−1 HP">−1</button></span>
+            <button class="bt-hp t-${btHp(x).tone}" data-hpedit="${i}" title="Click to set HP: 12, 12/30, −7 or +5" aria-label="HP ${btHp(x).known ? btHp(x).hp + (btHp(x).max ? ' of ' + btHp(x).max : '') : 'unknown'}. Click to set">${btHpInner(x)}</button>
+            <span class="bt-step bt-plus"><button class="bt-pm" data-hp="1" data-i="${i}" aria-label="+1 HP">+1</button><button class="bt-pm" data-hp="5" data-i="${i}" aria-label="+5 HP">+5</button></span>
+            <span class="bt-sb">${m ? `<button class="bt-sb-btn ${BT.open.has(k) ? 'on' : ''}" data-stat="${i}" title="Stat block" aria-label="Stat block" aria-expanded="${BT.open.has(k)}">${ic('book')}</button>` : ''}</span>` : ''}
+          </div>${m ? `<div class="statblock ${BT.open.has(k) ? '' : 'hidden'}" data-statblock="${i}">${statBlockHTML(m)}</div>` : ''}`;
         }).join('')}
       </div>
     </div>`;
+  const card = c.querySelector('.bt');
+  if (BT.ro) BT.ro.disconnect();
+  if (window.ResizeObserver) { BT.ro = new ResizeObserver(([e]) => card.classList.toggle('bt-narrow', e.contentRect.width < BT_NARROW)); BT.ro.observe(card); }
+  // long stat text: one line; a tap/click shows all of it (the tooltip has it too)
+  c.querySelectorAll('[data-notes]').forEach(n => n.onclick = e => { e.stopPropagation(); n.classList.toggle('open'); });
   if (!isDM) return;
   const saveEnc = () => api('/api/encounter', { method: 'PUT', body: enc });
-  $$('[data-hp]').forEach(b => b.onclick = async () => {
-    const x = combatants[Number(b.dataset.i)];
+  const rowOf = i => c.querySelector(`.bt-row[data-row="${i}"]`);
+  // touch / narrow: tapping a row selects it, which shows its ± steppers
+  c.querySelectorAll('.bt-row').forEach(r => r.addEventListener('click', e => {
+    if (e.target.closest('button, input, a')) return;
+    const k = btKey(combatants[Number(r.dataset.row)], Number(r.dataset.row));
+    BT.sel = BT.sel === k ? null : k;
+    c.querySelectorAll('.bt-row.sel').forEach(x => x !== r && x.classList.remove('sel'));
+    r.classList.toggle('sel', BT.sel === k);
+  }));
+  c.querySelectorAll('[data-hp]').forEach(b => b.onclick = async () => {
+    const i = Number(b.dataset.i), x = combatants[i];
     x.hp = Math.max(0, Number(x.hp || 0) + Number(b.dataset.hp));
+    BT.sel = btKey(x, i);
+    const chip = rowOf(i) && rowOf(i).querySelector('.bt-hp'); if (chip) btPaintHp(chip, x); // instant feedback, then save
     await saveEnc(); refresh(c);
   });
-  $$('[data-stat]').forEach(b => b.onclick = () => $(`[data-statblock="${b.dataset.stat}"]`).classList.toggle('hidden'));
+  c.querySelectorAll('[data-hpedit]').forEach(btn => btn.onclick = () => {
+    const i = Number(btn.dataset.hpedit), x = combatants[i], h = btHp(x);
+    const inp = document.createElement('input');
+    inp.className = 'bt-hp-in'; inp.value = h.known ? String(h.hp) : ''; inp.placeholder = h.max ? `/${h.max}` : 'HP';
+    inp.setAttribute('aria-label', `Set HP for ${x.name || 'combatant'}: a number, current/max, or −7 / +5`);
+    inp.autocomplete = 'off'; inp.spellcheck = false; inp.enterKeyHint = 'done';
+    btn.replaceWith(inp); inp.focus(); inp.select();
+    let done = false;
+    const finish = async commit => {
+      if (done) return; done = true;
+      const v = inp.value.trim().replace(/[−–]/g, '-');
+      let m;
+      if (commit && v && v !== String(h.hp)) {
+        if ((m = v.match(/^([+-])\s*(\d+)$/))) x.hp = Math.max(0, Number(x.hp || 0) + (m[1] === '-' ? -1 : 1) * Number(m[2]));
+        else if ((m = v.match(/^(\d+)\s*\/\s*(\d+)$/))) { x.hp = Number(m[1]); x.maxHp = Number(m[2]); }
+        else if ((m = v.match(/^\d+$/))) { x.hp = Number(v); if (!(Number(x.maxHp) > 0)) x.maxHp = x.hp; }
+        else { done = false; toast('Type a number: 12, 12/30, −7 or +5'); inp.select(); return; }
+        inp.replaceWith(btn); btPaintHp(btn, x);
+        await saveEnc(); refresh(c); return;
+      }
+      inp.replaceWith(btn); btn.focus();
+    };
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); } });
+    inp.addEventListener('blur', () => finish(true));
+  });
+  c.querySelectorAll('[data-stat]').forEach(b => b.onclick = () => {
+    const i = Number(b.dataset.stat), k = btKey(combatants[i], i);
+    const sb = c.querySelector(`[data-statblock="${i}"]`); if (!sb) return;
+    const open = sb.classList.toggle('hidden') === false;
+    if (open) BT.open.add(k); else BT.open.delete(k);
+    b.classList.toggle('on', open); b.setAttribute('aria-expanded', String(open));
+  });
   $('#b-next').onclick = async () => { const len = combatants.length; enc.turn = ((enc.turn || 0) + 1) % len; if (enc.turn === 0) enc.round = (enc.round || 1) + 1; await saveEnc(); refresh(c); };
   $('#b-prev').onclick = async () => { const len = combatants.length; enc.turn = ((enc.turn || 0) - 1 + len) % len; await saveEnc(); refresh(c); };
 }

@@ -112,20 +112,11 @@ table.enc input.num { max-width: 64px; text-align: center; }
 table.enc tr.turn td { background: var(--turn-bg); }
 table.enc tr.turn td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 
-/* Battle — initiative list */
+/* Battle — "your turn" banner (the tracker itself is styled in dm.css) */
 .your-turn { text-align: center; font-weight: 800; letter-spacing: .06em; font-size: 20px;
   color: var(--on-accent); background: linear-gradient(90deg, var(--accent-fill), var(--accent-fill-2)); border-radius: 8px;
   padding: 12px; margin: 10px 0; animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
-.init-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-.init-row { display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 10px;
-  padding: 9px 12px; border-radius: 8px; background: var(--bg3); border: 1px solid transparent; }
-.init-row.turn { border-color: var(--accent-line); background: var(--turn-bg); }
-.init-row.mine { box-shadow: inset 3px 0 0 var(--accent2); }
-.init-num { font-weight: 700; text-align: center; color: var(--muted); }
-.init-name { font-weight: 600; }
-.init-hp { font-size: 14px; color: var(--green); font-weight: 700; }
-.init-hp.low { color: var(--red); }
 
 /* Dice */
 .dice-quick { display: flex; gap: 6px; flex-wrap: wrap; }
