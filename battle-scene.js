@@ -3,10 +3,12 @@
    maps them to the screen as  screen = scene * z + (x, y). Pure drawing and geometry: no saving here.
    Needs media() from gh.js for images in the private data branch.
 
-   Frame order (GM): floor (cached bitmap) → grid (on the floor only) → templates → drawings → tokens →
-   fog (55% black, vector edge) → template chips → labels → live overlays.
-   Frame order (TV): floor → grid → templates → drawings → tokens → labels → fog (cached, noisy feather)
-   → the fogged part of every template again, so none is ever cut off → template chips → live overlays.
+   Frame order (GM): floor (cached bitmap: stones, props, wall shadows, torchlight) → grid (on the floor
+   only) → walls, doors, sconces (vectors) → templates → drawings → tokens → badges, HP bars → fog (55%
+   black on the floor, quiet amber edge) → template chips → labels → live overlays.
+   Frame order (TV): floor → grid → walls → templates → drawings → tokens → labels → fog (cached, noisy
+   feather) → a faint outline of the fogged part of each template → template chips (on revealed ground
+   only) → live overlays.
    Everything expensive (floors, fog, token art, shadows) is built once into offscreen canvases, so a
    pan or a drag only composites. */
 'use strict';
@@ -15,11 +17,12 @@ const BS_TAU = Math.PI * 2;
 const BS_BACKDROP = '#0B0C0F';
 const BS_VOID = '#0B0C0F'; // solid rock beyond a dungeon's walls
 const BS_FOG_TV = '#08090B'; // the players' fog, and the dark beyond the map edge on the TV
+// disposition rings: friendly (PCs and allies) amber, hostile red, neutral a muted brass
 const BS_KINDS = {
-  pc: { label: 'PC', ring: '#E2A53A' },
-  ally: { label: 'Ally', ring: '#3FA06B' },
-  foe: { label: 'Foe', ring: '#D9534F' },
-  neutral: { label: 'Neutral', ring: '#D9822B' }
+  pc: { label: 'PC', ring: '#E0A63A' },
+  ally: { label: 'Ally', ring: '#E0A63A' },
+  foe: { label: 'Foe', ring: '#D64545' },
+  neutral: { label: 'Neutral', ring: '#B08D57' }
 };
 // [cells, name, short]
 const BS_SIZES = [[0.5, 'Tiny', 'T'], [1, 'Medium', 'M'], [2, 'Large', 'L'], [3, 'Huge', 'H'], [4, 'Gargantuan', 'G']];
@@ -168,6 +171,36 @@ function bsTplCellsCached(sc, d, g) {
   let v = BS_TPL_CELLS.get(key);
   if (!v) { v = bsTplCells(sc, g); if (BS_TPL_CELLS.size > 200) BS_TPL_CELLS.clear(); BS_TPL_CELLS.set(key, v); }
   return v;
+}
+/* The stepped outline of a set of affected squares (cell top-left corners, size s): every cell edge
+   that is not shared with another affected cell, merged into straight runs. [[x0, y0, x1, y1], …] */
+function bsTplOutline(cells, s) {
+  if (cells.edges) return cells.edges;
+  const has = new Set(cells.map(([x, y]) => Math.round(x / s * 4) + ',' + Math.round(y / s * 4)));
+  const at = (x, y) => has.has(Math.round(x / s * 4) + ',' + Math.round(y / s * 4));
+  const hz = new Map(), vt = new Map(); // line -> sorted starts
+  const add = (m, line, start) => { let a = m.get(line); if (!a) m.set(line, a = []); a.push(start); };
+  for (const [x, y] of cells) {
+    if (!at(x, y - s)) add(hz, Math.round(y * 4) / 4, x);
+    if (!at(x, y + s)) add(hz, Math.round((y + s) * 4) / 4, x);
+    if (!at(x - s, y)) add(vt, Math.round(x * 4) / 4, y);
+    if (!at(x + s, y)) add(vt, Math.round((x + s) * 4) / 4, y);
+  }
+  const out = [];
+  const merge = (m, horiz) => {
+    for (const [line, starts] of m) {
+      starts.sort((a, b) => a - b);
+      let a0 = starts[0], a1 = a0 + s;
+      for (let i = 1; i <= starts.length; i++) {
+        const q = starts[i];
+        if (q != null && Math.abs(q - a1) < 0.01) { a1 = q + s; continue; }
+        out.push(horiz ? [a0, line, a1, line] : [line, a0, line, a1]);
+        if (q != null) { a0 = q; a1 = q + s; }
+      }
+    }
+  };
+  merge(hz, true); merge(vt, false);
+  return (cells.edges = out);
 }
 
 // ---------- token identity ----------
@@ -326,19 +359,16 @@ function bsFloor(sc) {
   else { bsFlagstone(x, w, h, g.size, rnd, k); bsPerimeter(x, w, h, g.size, k); }
   // clip: where the floor is (the grid is drawn there only); null = everywhere. plan / perimeter: walls the
   // view strokes again as vectors each frame, so they stay crisp at any zoom and pixel ratio
-  const out = { mips: bsMips(c), scale: k, light: style === 'parchment', clip, plan, perimeter: style === 'flagstone' || style === 'planks' ? g.size * 0.06 : 0 };
+  const out = { mips: bsMips(c), scale: k, light: style === 'parchment', clip, plan, perimeter: style === 'flagstone' || style === 'planks' ? bsWallT(g.size) : 0 };
   if (BS_FLOOR_CACHE.size > 6) BS_FLOOR_CACHE.delete(BS_FLOOR_CACHE.keys().next().value);
   BS_FLOOR_CACHE.set(key, out);
   return out;
 }
-/* A wall around the whole floor (flagstones, planks): a dark stroke ~6 px at 100% with ~12 px of
-   ambient occlusion falling onto the floor inside it. */
+/* A wall around the whole floor (flagstones, planks): the floor carries the ~12 px of ambient occlusion
+   it casts; the wall itself (a stone band, as in the dungeon) is drawn by the view each frame. */
 function bsPerimeter(x, w, h, s, k) {
-  const ww = s * 0.06;
   const rock = new Path2D(); rock.rect(-w, -h, w * 3, h * 3); rock.rect(0, 0, w, h);
   x.save(); x.beginPath(); x.rect(0, 0, w, h); x.clip(); bsInnerShade(x, k, rock, s); x.restore();
-  x.save(); x.lineWidth = s * 0.013; x.strokeStyle = 'rgba(255,236,214,.18)'; x.strokeRect(ww + s * 0.0065, ww + s * 0.0065, w - ww * 2 - s * 0.013, h - ww * 2 - s * 0.013);
-  x.lineWidth = ww * 2; x.strokeStyle = '#060708'; x.strokeRect(0, 0, w, h); x.restore();
 }
 /* The ambient occlusion walls throw onto the floor: two soft shadows cast by the rock (an even-odd
    Path2D, floor cut out of a big rectangle). Call with the floor clipped, so only the shadow lands. */
@@ -436,8 +466,9 @@ function bsFlagstone(x, w, h, s, rnd, k, opt = {}) {
   }
   // grime in the low spots, a little moss, uneven light, then the room's edges fall away into dark
   bsBlotches(x, w, h, s, rnd, Math.round(w * h / (s * s) / 10) + 4, ['rgba(12,10,6,.45)', 'rgba(0,0,0,.35)', 'rgba(40,52,24,.3)'], 'multiply', [1, 3.5]);
-  bsTile(x, bsFbm(9), w, h, Math.max(w, h) * 0.7, 0.55, 'soft-light', rnd() * 300, rnd() * 300);
-  bsBlotches(x, w, h, s, rnd, Math.max(2, Math.round(w * h / (s * s) / 90)), ['rgba(255,196,120,.10)', 'rgba(255,214,160,.08)'], 'screen', [3, 7]);
+  // (lit: false = the dungeon, whose light comes from its sconces instead of a wash)
+  bsTile(x, bsFbm(9), w, h, Math.max(w, h) * 0.7, opt.lit === false ? 0.3 : 0.55, 'soft-light', rnd() * 300, rnd() * 300);
+  if (opt.lit !== false) bsBlotches(x, w, h, s, rnd, Math.max(2, Math.round(w * h / (s * s) / 90)), ['rgba(255,196,120,.10)', 'rgba(255,214,160,.08)'], 'screen', [3, 7]);
   if (opt.vignette !== false) bsVignette(x, w, h, 'rgba(0,0,0,.55)', 0.3);
 }
 function bsStone(x, poly, s, rnd, k, tex, grain) {
@@ -781,12 +812,12 @@ function bsDungeonPlan(sc) {
       const n = along ? o.w : o.h, cnt = 2 + Math.floor(rnd() * 3), start = (along ? o.x : o.y) + Math.floor(rnd() * Math.max(1, n - cnt + 1));
       for (let q = start; q < start + cnt; q++) { const c = along ? q : line, r = along ? line : q; if (roomCell(o, c, r) && !occ[I(c, r)]) put(rnd() < 0.55 ? 'barrel' : 'crate', c, r); }
     }
-    // a sconce or two on the walls (light pools are part of the floor)
+    // a sconce or two on the walls, each throwing a 15–20 ft pool of torchlight (part of the floor)
     const free = walls.slice();
     for (let l = 0; l < (o.w * o.h >= 30 ? 2 : 1) && free.length; l++) {
       const sd = free.splice(Math.floor(rnd() * free.length), 1)[0], along = sd === 'N' || sd === 'S';
       const wx = along ? o.x + Math.floor(o.w / 2) + 0.5 : (sd === 'W' ? o.x : o.x + o.w), wy = along ? (sd === 'N' ? o.y : o.y + o.h) : o.y + Math.floor(o.h / 2) + 0.5;
-      lights.push({ x: ox + wx * s, y: oy + wy * s, side: sd, r: s * bsClamp(Math.max(o.w, o.h) * 0.5, 1.8, 3.2) });
+      lights.push({ x: ox + wx * s, y: oy + wy * s, side: sd, r: s * (o.w * o.h >= 30 ? 4 : 3.2), room: [ox + o.x * s, oy + o.y * s, o.w * s, o.h * s] });
     }
   }
   if (!small) {
@@ -816,10 +847,11 @@ function bsDungeonPlan(sc) {
       if (on && st < 0) st = c; else if (!on && st >= 0) { P.rect(X(st), Y(r), (c - st) * s, s); st = -1; }
     }
   }
-  for (let r = 1; r < R; r++) { let st = -1; for (let c = 0; c <= C; c++) { const on = c < C && isF(c, r - 1) !== isF(c, r); if (on && st < 0) st = c; else if (!on && st >= 0) { walls.moveTo(X(st), Y(r)); walls.lineTo(X(c), Y(r)); st = -1; } } }
-  for (let c = 1; c < C; c++) { let st = -1; for (let r = 0; r <= R; r++) { const on = r < R && isF(c - 1, r) !== isF(c, r); if (on && st < 0) st = r; else if (!on && st >= 0) { walls.moveTo(X(c), Y(st)); walls.lineTo(X(c), Y(r)); st = -1; } } }
+  const runs = []; // the same walls as straight runs [x0, y0, x1, y1] (stone courses are laid along them)
+  for (let r = 1; r < R; r++) { let st = -1; for (let c = 0; c <= C; c++) { const on = c < C && isF(c, r - 1) !== isF(c, r); if (on && st < 0) st = c; else if (!on && st >= 0) { walls.moveTo(X(st), Y(r)); walls.lineTo(X(c), Y(r)); runs.push([X(st), Y(r), X(c), Y(r)]); st = -1; } } }
+  for (let c = 1; c < C; c++) { let st = -1; for (let r = 0; r <= R; r++) { const on = r < R && isF(c - 1, r) !== isF(c, r); if (on && st < 0) st = r; else if (!on && st >= 0) { walls.moveTo(X(c), Y(st)); walls.lineTo(X(c), Y(r)); runs.push([X(c), Y(st), X(c), Y(r)]); st = -1; } } }
   rock.rect(-w, -h, w * 3, h * 3); rock.addPath(path);
-  const plan = { C, R, s, ox, oy, cell, rooms: rooms.filter(o => !o.dead), doors, props, lights, path, corr, walls, rock };
+  const plan = { C, R, s, ox, oy, cell, rooms: rooms.filter(o => !o.dead), doors, props, lights, path, corr, walls, rock, runs, wallT: bsWallT(s) };
   if (BS_PLANS.size > 8) BS_PLANS.delete(BS_PLANS.keys().next().value);
   BS_PLANS.set(key, plan);
   return plan;
@@ -833,102 +865,284 @@ function bsHeapPop(hp) {
   }
   return top;
 }
-/* Paint a plan: flat rock, flagstones clipped to the rooms (corridors a shade darker), props, ~12 px of
-   ambient occlusion along every wall, warm light from the sconces, then the walls (6 px dark strokes
-   with a faint chiselled lip on the rock side), doors and sconces. */
+/* Paint a plan into the cached floor: flat rock, flagstones clipped to the rooms (corridors a shade
+   darker), props, ~12 px of ambient occlusion along every wall, then the light (a dim ambient and a warm
+   pool from each sconce). The walls, doors and sconces themselves are vectors the view draws each frame
+   (drawWalls), so they stay crisp at any zoom; the floor only carries what they cast. */
 function bsDungeon(x, w, h, plan, rnd, k) {
   const { s } = plan;
   x.fillStyle = BS_VOID; x.fillRect(0, 0, w, h);
   x.save(); x.clip(plan.path);
-  bsFlagstone(x, w, h, s, rnd, k, { vignette: false });
-  x.fillStyle = 'rgba(0,0,0,.16)'; x.fill(plan.corr);
+  bsFlagstone(x, w, h, s, rnd, k, { vignette: false, lit: false });
+  // corridors are laid in smaller, rougher setts than the rooms' slabs (each run of passage on its own)
+  for (const [bx, by, bw, bh] of bsCorridorBoxes(plan)) {
+    x.save(); x.clip(plan.corr); x.beginPath(); x.rect(bx, by, bw, bh); x.clip(); x.translate(bx, by);
+    bsFlagstone(x, bw, bh, s * 0.52, rnd, k, { vignette: false, lit: false });
+    x.restore();
+  }
+  x.fillStyle = 'rgba(0,0,0,.12)'; x.fill(plan.corr);
   for (const p of plan.props) bsProp(x, p, plan, k);
   bsInnerShade(x, k, plan.rock, s);
-  x.globalCompositeOperation = 'screen';
-  for (const L of plan.lights) {
-    const [ic, ir] = BS_INWARD[L.side], lx = L.x + ic * s * 0.55, ly = L.y + ir * s * 0.55;
-    const g = x.createRadialGradient(lx, ly, 0, lx, ly, L.r);
-    g.addColorStop(0, 'rgba(255,178,96,.24)'); g.addColorStop(0.4, 'rgba(255,160,80,.10)'); g.addColorStop(1, 'rgba(255,150,70,0)');
-    x.fillStyle = g; x.fillRect(lx - L.r, ly - L.r, L.r * 2, L.r * 2);
-  }
+  bsLight(x, w, h, plan, k);
   x.restore();
-  // walls: a 6 px dark stroke, a fine lit edge where it meets the floor, a faint chiselled lip on the rock side
-  x.save(); x.clip(plan.path); x.lineCap = 'square'; x.lineWidth = s * 0.06 + s * 0.026; x.strokeStyle = 'rgba(255,236,214,.2)'; x.stroke(plan.walls); x.restore();
-  x.save(); x.clip(plan.rock, 'evenodd'); x.lineCap = 'square'; x.lineWidth = s * 0.06 + s * 0.04; x.strokeStyle = '#1d2026'; x.stroke(plan.walls); x.restore();
-  x.save(); x.lineCap = 'square'; x.lineWidth = s * 0.06; x.strokeStyle = '#050607'; x.stroke(plan.walls); x.restore();
-  for (const d of plan.doors) bsDoor(x, d, plan, k);
-  for (const L of plan.lights) bsSconce(x, L, plan);
 }
-function bsDoor(x, d, plan, k) {
-  const { s, ox, oy } = plan, [c, r] = d.in, vert = d.side === 'E' || d.side === 'W';
-  // local frame: the doorway runs from (0,0) to (s,0); the door's faces are at y = ±t
+// the bounding boxes (scene px) of the plan's connected runs of corridor
+function bsCorridorBoxes(plan) {
+  const { C, R, s, ox, oy, cell } = plan, seen = new Uint8Array(C * R), out = [];
+  for (let i0 = 0; i0 < C * R; i0++) {
+    if (cell[i0] !== 2 || seen[i0]) continue;
+    let c0 = C, r0 = R, c1 = -1, r1 = -1; const st = [i0]; seen[i0] = 1;
+    while (st.length) {
+      const i = st.pop(), c = i % C, r = (i / C) | 0;
+      if (c < c0) c0 = c; if (c > c1) c1 = c; if (r < r0) r0 = r; if (r > r1) r1 = r;
+      for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nc = c + dc, nr = r + dr, j = nr * C + nc;
+        if (nc >= 0 && nr >= 0 && nc < C && nr < R && cell[j] === 2 && !seen[j]) { seen[j] = 1; st.push(j); }
+      }
+    }
+    out.push([ox + c0 * s, oy + r0 * s, (c1 - c0 + 1) * s, (r1 - r0 + 1) * s]);
+  }
+  return out;
+}
+/* Light comes from the sources: the floor is multiplied by a light map, a dim cool ambient plus a warm
+   pool from each sconce (#ffb35c, ~40% at the flame falling to nothing over 15–20 ft) that stays inside
+   its own room. Call with the floor clipped. */
+function bsLight(x, w, h, plan, k) {
+  const { s } = plan, T = plan.wallT || bsWallT(s), c = bsCanvas(w * k, h * k), lx = c.getContext('2d');
+  lx.scale(k, k);
+  lx.fillStyle = 'rgb(128,131,144)'; lx.fillRect(0, 0, w, h);
+  lx.globalCompositeOperation = 'lighter';
+  for (const L of plan.lights) {
+    const [fx, fy] = bsFlame(L, s, T);
+    lx.save();
+    if (L.room) { const m = T / 2; lx.beginPath(); lx.rect(L.room[0] - m, L.room[1] - m, L.room[2] + m * 2, L.room[3] + m * 2); lx.clip(); }
+    const g = lx.createRadialGradient(fx, fy, 0, fx, fy, L.r);
+    for (const [t, a] of [[0, 0.5], [0.12, 0.44], [0.32, 0.32], [0.55, 0.17], [0.8, 0.05], [1, 0]]) g.addColorStop(t, `rgba(255,179,92,${a})`);
+    lx.fillStyle = g; lx.fillRect(fx - L.r, fy - L.r, L.r * 2, L.r * 2);
+    lx.restore();
+  }
+  x.save(); x.globalCompositeOperation = 'multiply'; x.setTransform(1, 0, 0, 1, 0, 0); x.drawImage(c, 0, 0); x.restore();
+}
+// where a sconce's flame sits: just off the face of its wall
+function bsFlame(L, s, T) { const [ic, ir] = BS_INWARD[L.side], d = T * 0.5 + s * 0.08; return [L.x + ic * d, L.y + ir * d]; }
+// wall thickness in scene px: 10 px on a 100 px square (8–10 px at 100%), never under 7
+function bsWallT(s) { return Math.max(7, s * 0.1); }
+/* Dressed stone laid along the walls: a mortar joint across the band every ~⅓ square, the odd block a
+   shade lighter or darker. Built once per plan, in scene units; the view strokes it each frame. */
+function bsWallDetail(plan) {
+  if (plan.wallDetail) return plan.wallDetail;
+  const T = plan.wallT || bsWallT(plan.s), s = plan.s, rnd = bsRng(plan.C * 7919 + plan.R * 131 + Math.round(s));
+  const joints = new Path2D(), light = new Path2D(), dark = new Path2D();
+  for (const [x0, y0, x1, y1] of plan.runs || []) {
+    const horiz = Math.abs(y0 - y1) < 0.01, a0 = (horiz ? x0 : y0) - T / 2, a1 = (horiz ? x1 : y1) + T / 2, c = horiz ? y0 : x0;
+    let prev = a0, next = a0 + s * (0.08 + rnd() * 0.22);
+    for (;;) {
+      next = Math.min(a1, next);
+      const roll = rnd();
+      if (roll < 0.26 || roll > 0.74) { const P = roll < 0.26 ? light : dark; if (horiz) P.rect(prev, c - T / 2, next - prev, T); else P.rect(c - T / 2, prev, T, next - prev); }
+      if (next >= a1 - 0.5) break;
+      if (horiz) { joints.moveTo(next, c - T / 2); joints.lineTo(next, c + T / 2); } else { joints.moveTo(c - T / 2, next); joints.lineTo(c + T / 2, next); }
+      prev = next; next += s * (0.22 + rnd() * 0.18);
+    }
+  }
+  return (plan.wallDetail = { T, joints, light, dark });
+}
+// the wall's stone: warm grey, mottled and grainy (a pattern the band, jambs and thresholds share)
+let BS_WALLTEX = null;
+function bsWallTex() {
+  if (BS_WALLTEX) return BS_WALLTEX;
+  const n = 128, c = bsCanvas(n, n), x = c.getContext('2d');
+  x.fillStyle = '#625c53'; x.fillRect(0, 0, n, n);
+  x.globalCompositeOperation = 'soft-light'; x.globalAlpha = 0.9; x.drawImage(bsFbm(17, 128), 0, 0);
+  x.globalCompositeOperation = 'overlay'; x.globalAlpha = 0.28; x.drawImage(bsNoise(), 0, 0, 128, 128, 0, 0, n, n);
+  return (BS_WALLTEX = c);
+}
+/* A wall: a band of dressed stone T wide on the wall line, a near-black keyline along both faces, the
+   floor-side edge of its top catching the light, the rock-side half a shade darker, mortar joints
+   across it. Vectors in scene units (z = zoom, so hairlines stay ~1 css px). floor/rock: optional
+   clip paths (rock is even-odd). */
+function bsWallBand(x, path, wd, z, pat, floor, rock) {
+  const T = wd.T, px = 1 / z, base = pat || '#5f5950';
+  x.save(); x.lineCap = 'square'; x.lineJoin = 'miter';
+  x.lineWidth = T + 2.4 * px; x.strokeStyle = '#060708'; x.stroke(path);
+  x.lineWidth = T; x.strokeStyle = base; x.stroke(path);
+  if (rock) { x.save(); x.clip(rock, 'evenodd'); x.strokeStyle = 'rgba(0,0,0,.24)'; x.stroke(path); x.restore(); }
+  if (floor) {
+    const rim = Math.min(T * 0.2, 1.6 * px);
+    x.save(); x.clip(floor);
+    x.strokeStyle = '#b9b0a0'; x.stroke(path);
+    x.lineWidth = Math.max(0.1, T - rim * 2); x.strokeStyle = base; x.stroke(path);
+    x.restore();
+  }
+  if (wd.light) { x.fillStyle = 'rgba(255,242,224,.08)'; x.fill(wd.light); }
+  if (wd.dark) { x.fillStyle = 'rgba(0,0,0,.2)'; x.fill(wd.dark); }
+  if (wd.joints && T * z >= 4) { x.lineCap = 'butt'; x.lineWidth = Math.max(px * 0.9, T * 0.08); x.strokeStyle = 'rgba(14,12,10,.8)'; x.stroke(wd.joints); }
+  x.restore();
+}
+/* A doorway (local frame: the opening runs from (0,0) to (s,0) along the wall line, y crosses the wall,
+   +y toward the room when inSide is 1): a worn threshold slab between two stone jambs a little proud of
+   the wall; a door is a planked oak leaf with two riveted iron straps and a ring pull on the room side,
+   an arch is left open. Vectors, drawn each frame. */
+function bsDoor(x, d, plan, k, z = 1, pat) {
+  const { s, ox, oy } = plan, T = plan.wallT || bsWallT(s), [c, r] = d.in, vert = d.side === 'E' || d.side === 'W';
+  const px = 1 / z, inSide = d.side === 'N' || d.side === 'E' ? 1 : -1, stone = pat || '#5f5950';
   x.save();
   if (vert) { x.translate(ox + (d.side === 'E' ? c + 1 : c) * s, oy + r * s); x.rotate(Math.PI / 2); }
   else x.translate(ox + c * s, oy + (d.side === 'S' ? r + 1 : r) * s);
-  const jl = s * 0.12, jt = s * 0.075;
-  for (const a of [0, s - jl]) { x.beginPath(); x.rect(a, -jt, jl, jt * 2); x.fillStyle = '#2a2724'; x.fill(); x.lineWidth = s * 0.012; x.strokeStyle = '#050607'; x.stroke(); }
+  const th = T * 0.62, jl = Math.max(T * 1.2, s * 0.11), jh = T * 0.8;
+  // threshold: a worn sill flush with the floor, a shade paler, scored along its edges and twice across
+  x.fillStyle = 'rgba(168,156,136,.26)'; x.fillRect(0, -th, s, th * 2);
+  x.lineWidth = px; x.strokeStyle = 'rgba(10,9,8,.5)';
+  x.beginPath(); x.moveTo(0, -th); x.lineTo(s, -th); x.moveTo(0, th); x.lineTo(s, th);
+  for (const f of [0.36, 0.67]) { x.moveTo(s * f, -th); x.lineTo(s * f, th); }
+  x.stroke();
   if (d.kind === 'door') {
-    const t = s * 0.07, L0 = jl, Ld = s - jl * 2;
-    x.save(); x.shadowColor = 'rgba(0,0,0,.6)'; x.shadowBlur = s * 0.06 * k; x.shadowOffsetY = s * 0.02 * k;
-    x.fillStyle = '#4a311b'; x.fillRect(L0, -t, Ld, t * 2); x.restore();
-    const g = x.createLinearGradient(0, -t, 0, t); g.addColorStop(0, '#93683d'); g.addColorStop(0.5, '#6f4a29'); g.addColorStop(1, '#46301a');
-    x.fillStyle = g; x.fillRect(L0, -t, Ld, t * 2);
-    x.strokeStyle = 'rgba(30,18,8,.55)'; x.lineWidth = s * 0.006;
-    x.beginPath(); x.moveTo(L0, -t / 3); x.lineTo(L0 + Ld, -t / 3); x.moveTo(L0, t / 3); x.lineTo(L0 + Ld, t / 3); x.stroke();
-    x.fillStyle = '#23201d'; for (const f of [0.2, 0.8]) x.fillRect(L0 + Ld * f - s * 0.017, -t, s * 0.034, t * 2);
-    x.lineWidth = s * 0.012; x.strokeStyle = '#140d06'; x.strokeRect(L0, -t, Ld, t * 2);
-    x.beginPath(); x.arc(L0 + Ld * 0.5, 0, s * 0.02, 0, BS_TAU); x.fillStyle = '#c9a25a'; x.fill();
-  } else { x.fillStyle = 'rgba(255,240,220,.05)'; x.fillRect(jl, -jt, s - jl * 2, jt * 2); }
+    const L0 = jl - T * 0.25, L1 = s - jl + T * 0.25, lt = Math.max(T * 0.68, s * 0.075), Lw = L1 - L0;
+    x.fillStyle = 'rgba(0,0,0,.32)'; x.fillRect(L0 + s * 0.02, -lt + s * 0.03, Lw, lt * 2); // 3 px cast shadow
+    const g = x.createLinearGradient(0, -lt * inSide, 0, lt * inSide);
+    g.addColorStop(0, '#4c3119'); g.addColorStop(0.5, '#74502c'); g.addColorStop(1, '#93693e');
+    x.fillStyle = g; x.fillRect(L0, -lt, Lw, lt * 2);
+    x.save(); x.beginPath(); x.rect(L0, -lt, Lw, lt * 2); x.clip();
+    const rnd = bsRng(c * 131 + r * 17 + 5);
+    x.lineWidth = Math.max(px * 0.5, lt * 0.05); x.strokeStyle = 'rgba(38,20,6,.4)'; x.beginPath();
+    for (let i = 0; i < 8; i++) { const yy = -lt + lt * 2 * rnd(); x.moveTo(L0, yy); x.bezierCurveTo(L0 + Lw * 0.3, yy + (rnd() - 0.5) * lt * 0.3, L0 + Lw * 0.7, yy + (rnd() - 0.5) * lt * 0.3, L1, yy + (rnd() - 0.5) * lt * 0.2); }
+    x.stroke();
+    // three planks along the leaf
+    x.lineWidth = Math.max(px * 0.8, lt * 0.09); x.strokeStyle = 'rgba(26,14,4,.9)';
+    x.beginPath(); for (const f of [-1 / 3, 1 / 3]) { x.moveTo(L0, f * lt); x.lineTo(L1, f * lt); } x.stroke();
+    // two iron straps, riveted
+    const bw = Math.max(1.6 * px, s * 0.034);
+    for (const f of [0.22, 0.78]) {
+      const bx = L0 + Lw * f - bw / 2;
+      x.fillStyle = '#25262a'; x.fillRect(bx, -lt, bw, lt * 2);
+      x.fillStyle = 'rgba(210,214,224,.22)'; x.fillRect(bx, -lt, Math.max(px * 0.6, bw * 0.22), lt * 2);
+      x.fillStyle = '#9a9ca3';
+      for (const ry of [-0.62, 0, 0.62]) { x.beginPath(); x.arc(bx + bw / 2, ry * lt, Math.max(px * 0.45, bw * 0.2), 0, BS_TAU); x.fill(); }
+    }
+    x.restore();
+    x.fillStyle = 'rgba(255,226,182,.28)'; x.fillRect(L0, inSide > 0 ? lt - Math.max(px, lt * 0.12) : -lt, Lw, Math.max(px, lt * 0.12)); // the lit face
+    x.lineWidth = Math.max(px, s * 0.006); x.strokeStyle = '#120a03'; x.strokeRect(L0, -lt, Lw, lt * 2);
+    x.beginPath(); x.arc(L0 + Lw * 0.5, inSide * lt * 0.48, Math.max(px * 1.6, s * 0.024), 0, BS_TAU);
+    x.lineWidth = Math.max(px, s * 0.009); x.strokeStyle = '#c9a25a'; x.stroke();
+  }
+  // jambs: dressed stone blocks a little proud of the wall, their room-side edge lit
+  for (const [a0, a1] of [[-T * 0.45, jl], [s - jl, s + T * 0.45]]) {
+    x.fillStyle = 'rgba(0,0,0,.3)'; x.fillRect(a0 + s * 0.02, -jh + s * 0.03, a1 - a0, jh * 2);
+    x.fillStyle = stone; x.fillRect(a0, -jh, a1 - a0, jh * 2);
+    x.fillStyle = 'rgba(255,242,224,.07)'; x.fillRect(a0, -jh, a1 - a0, jh * 2);
+    x.fillStyle = 'rgba(0,0,0,.22)'; x.fillRect(a0, inSide > 0 ? -jh : 0, a1 - a0, jh);
+    x.fillStyle = '#b9b0a0'; x.fillRect(a0, inSide > 0 ? jh - Math.min(jh * 0.2, 1.6 * px) : -jh, a1 - a0, Math.min(jh * 0.2, 1.6 * px));
+    x.lineWidth = 1.2 * px; x.strokeStyle = '#060708'; x.strokeRect(a0, -jh, a1 - a0, jh * 2);
+  }
   x.restore();
 }
-function bsSconce(x, L, plan) {
-  const { s } = plan, [ic, ir] = BS_INWARD[L.side], fx = L.x + ic * s * 0.075, fy = L.y + ir * s * 0.075;
+/* A torch in an iron bracket on the wall's face, with its flame's own small glow (the pool it throws
+   is in the floor's light map). Vectors, drawn each frame. */
+function bsSconce(x, L, plan, z = 1) {
+  const { s } = plan, T = plan.wallT || bsWallT(s), [ic, ir] = BS_INWARD[L.side], px = 1 / z;
+  const [fx, fy] = bsFlame(L, s, T), bx = L.x + ic * T * 0.15, by = L.y + ir * T * 0.15;
   x.save();
-  x.beginPath(); x.arc(L.x + ic * s * 0.03, L.y + ir * s * 0.03, s * 0.045, 0, BS_TAU); x.fillStyle = '#16140f'; x.fill();
   x.globalCompositeOperation = 'lighter';
-  const g = x.createRadialGradient(fx, fy, 0, fx, fy, s * 0.24);
-  g.addColorStop(0, 'rgba(255,214,140,.8)'); g.addColorStop(0.22, 'rgba(255,170,80,.32)'); g.addColorStop(1, 'rgba(255,140,60,0)');
-  x.fillStyle = g; x.fillRect(fx - s * 0.24, fy - s * 0.24, s * 0.48, s * 0.48);
+  const R = s * 0.85, g = x.createRadialGradient(fx, fy, 0, fx, fy, R);
+  g.addColorStop(0, 'rgba(255,196,120,.62)'); g.addColorStop(0.1, 'rgba(255,176,90,.36)'); g.addColorStop(0.35, 'rgba(255,156,70,.1)'); g.addColorStop(1, 'rgba(255,140,60,0)');
+  x.fillStyle = g; x.fillRect(fx - R, fy - R, R * 2, R * 2);
   x.globalCompositeOperation = 'source-over';
-  x.beginPath(); x.arc(fx, fy, s * 0.024, 0, BS_TAU); x.fillStyle = '#fff3d0'; x.fill();
+  x.lineCap = 'round'; x.lineWidth = Math.max(px * 1.6, s * 0.03); x.strokeStyle = '#121214';
+  x.beginPath(); x.moveTo(bx, by); x.lineTo(fx, fy); x.stroke();
+  x.beginPath(); x.rect(bx - s * 0.045 * Math.abs(ir) - T * 0.25 * Math.abs(ic), by - s * 0.045 * Math.abs(ic) - T * 0.25 * Math.abs(ir), s * 0.09 * Math.abs(ir) + T * 0.5 * Math.abs(ic), s * 0.09 * Math.abs(ic) + T * 0.5 * Math.abs(ir));
+  x.fillStyle = '#1b1b1e'; x.fill(); x.lineWidth = px; x.strokeStyle = '#000'; x.stroke();
+  x.beginPath(); x.arc(fx, fy, s * 0.055, 0, BS_TAU); x.fillStyle = '#2b2520'; x.fill(); x.lineWidth = px; x.strokeStyle = '#000'; x.stroke();
+  x.beginPath(); x.arc(fx, fy, s * 0.04, 0, BS_TAU); x.fillStyle = '#ff9a3c'; x.fill();
+  x.beginPath(); x.arc(fx + ic * s * 0.006, fy + ir * s * 0.006, s * 0.026, 0, BS_TAU); x.fillStyle = '#ffd27a'; x.fill();
+  x.beginPath(); x.arc(fx + ic * s * 0.008, fy + ir * s * 0.008, s * 0.012, 0, BS_TAU); x.fillStyle = '#fff6dc'; x.fill();
   x.restore();
 }
+/* Props, baked into the floor. Each casts the same short shadow, 3 px down and right at 30% black (at
+   100%), and is drawn top-down: a column is a chipped square plinth under a round drum with a flat,
+   dressed top; a barrel is its hooped head; a crate its braced lid. */
 function bsProp(x, p, plan, k) {
   const { s, ox, oy } = plan, cx = ox + (p.c + 0.5) * s, cy = oy + (p.r + 0.5) * s, rnd = bsRng(p.seed);
   const shade = (blur, dx, dy, a = 0.6) => { x.shadowColor = `rgba(0,0,0,${a})`; x.shadowBlur = blur * s * k; x.shadowOffsetX = dx * s * k; x.shadowOffsetY = dy * s * k; };
+  const cast = (a = 0.3, d = 0.03, blur = 0.02) => shade(blur, d, d, a);
+  const tex = (X, Y, W, H, a = 0.7) => {
+    x.globalCompositeOperation = 'soft-light'; x.globalAlpha = a; x.drawImage(bsFbm(5), rnd() * 160, rnd() * 160, 70 + rnd() * 20, 70 + rnd() * 20, X, Y, W, H);
+    x.globalCompositeOperation = 'overlay'; x.globalAlpha = 0.22; x.drawImage(bsNoise(), rnd() * 120, rnd() * 120, 80, 80, X, Y, W, H);
+    x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1;
+  };
   x.save();
   if (p.type === 'pillar') {
-    // a square plinth and a round column, lit from the top left
-    const b = s * 0.36, cr = s * 0.25;
-    x.save(); shade(0.12, 0.04, 0.07); bsRoundRect(x, cx - b, cy - b, b * 2, b * 2, s * 0.05); x.fillStyle = '#3b3833'; x.fill(); x.restore();
-    let g = x.createLinearGradient(cx - b, cy - b, cx + b, cy + b); g.addColorStop(0, '#5f5a51'); g.addColorStop(1, '#2b2925');
-    bsRoundRect(x, cx - b, cy - b, b * 2, b * 2, s * 0.05); x.fillStyle = g; x.fill(); x.lineWidth = s * 0.012; x.strokeStyle = '#11100e'; x.stroke();
-    x.save(); shade(0.07, 0.025, 0.04, 0.55); x.beginPath(); x.arc(cx, cy, cr, 0, BS_TAU); x.fillStyle = '#4a463f'; x.fill(); x.restore();
-    g = x.createRadialGradient(cx - cr * 0.4, cy - cr * 0.45, cr * 0.05, cx, cy, cr);
-    g.addColorStop(0, '#a0988b'); g.addColorStop(0.55, '#655f56'); g.addColorStop(1, '#35322d');
-    x.beginPath(); x.arc(cx, cy, cr, 0, BS_TAU); x.fillStyle = g; x.fill(); x.lineWidth = s * 0.012; x.strokeStyle = '#121110'; x.stroke();
-    x.save(); x.clip(); x.globalCompositeOperation = 'soft-light'; x.globalAlpha = 0.6; x.drawImage(bsFbm(5), rnd() * 180, rnd() * 180, 60, 60, cx - cr, cy - cr, cr * 2, cr * 2); x.restore();
-    x.beginPath(); x.arc(cx, cy, cr * 0.7, 0, BS_TAU); x.strokeStyle = 'rgba(0,0,0,.22)'; x.lineWidth = s * 0.008; x.stroke();
-  } else if (p.type === 'barrel') {
-    const r = s * (0.28 + rnd() * 0.04), bx = cx + (rnd() - 0.5) * s * 0.12, by = cy + (rnd() - 0.5) * s * 0.12, lr = r * 0.84;
-    x.save(); shade(0.08, 0.03, 0.05); x.beginPath(); x.arc(bx, by, r, 0, BS_TAU); x.fillStyle = '#2a2420'; x.fill(); x.restore();
-    const g = x.createLinearGradient(bx - lr, by - lr, bx + lr, by + lr); g.addColorStop(0, '#83603a'); g.addColorStop(1, '#4c321b');
-    x.beginPath(); x.arc(bx, by, lr, 0, BS_TAU); x.fillStyle = g; x.fill();
-    x.save(); x.clip(); x.translate(bx, by); x.rotate(rnd() * Math.PI); x.strokeStyle = 'rgba(40,22,8,.55)'; x.lineWidth = s * 0.008;
-    for (const f of [-0.5, 0, 0.5]) { x.beginPath(); x.moveTo(f * lr, -lr); x.lineTo(f * lr, lr); x.stroke(); }
+    const b = s * 0.36, cr = s * 0.255, ch = () => s * (0.015 + rnd() * 0.05);
+    const pl = bsRoughen([[-b, -b + ch()], [-b + ch(), -b], [b - ch(), -b], [b, -b + ch()], [b, b - ch()], [b - ch(), b], [-b + ch(), b], [-b, b - ch()]].map(([u, v]) => [cx + u, cy + v]), s * 0.006, rnd, s * 0.07);
+    const bb = [cx - b, cy - b, cx + b, cy + b];
+    // where the plinth meets the floor: a soft contact shadow, then the cast shadow
+    x.save(); shade(0.08, 0, 0, 0.5); x.beginPath(); bsPolyPath(x, pl); x.fillStyle = '#000'; x.fill(); x.restore();
+    x.save(); cast(0.3, 0.03, 0.02); x.beginPath(); bsPolyPath(x, pl); x.fillStyle = '#58534b'; x.fill(); x.restore();
+    x.save(); x.beginPath(); bsPolyPath(x, pl); x.clip();
+    let g = x.createLinearGradient(bb[0], bb[1], bb[2], bb[3]); g.addColorStop(0, '#827c71'); g.addColorStop(1, '#4c4841');
+    x.fillStyle = g; x.fillRect(bb[0], bb[1], b * 2, b * 2);
+    tex(bb[0], bb[1], b * 2, b * 2);
+    // a moulded step just inside the edge
+    x.lineWidth = s * 0.012; x.strokeStyle = 'rgba(0,0,0,.3)'; x.strokeRect(cx - b * 0.8, cy - b * 0.8, b * 1.6, b * 1.6);
+    x.lineWidth = s * 0.008; x.strokeStyle = 'rgba(255,244,228,.12)'; x.strokeRect(cx - b * 0.8 + s * 0.011, cy - b * 0.8 + s * 0.011, b * 1.6, b * 1.6);
+    bsBevel(x, pl, bb, k, s * 0.03, 'rgba(255,240,220,.3)', 'rgba(0,0,0,.45)', s * 0.012);
     x.restore();
-    x.beginPath(); x.arc(bx, by, r * 0.93, 0, BS_TAU); x.strokeStyle = 'rgba(210,200,180,.2)'; x.lineWidth = s * 0.008; x.stroke();
-    x.beginPath(); x.arc(bx + lr * 0.35, by + lr * 0.1, s * 0.022, 0, BS_TAU); x.fillStyle = '#2a1a0c'; x.fill();
+    x.beginPath(); bsPolyPath(x, pl); x.lineWidth = s * 0.01; x.strokeStyle = 'rgba(8,7,6,.9)'; x.stroke();
+    // the drum: its shadow on the plinth, a flat dressed top lit from the top left, chips and a crack
+    x.save(); cast(0.4, 0.035, 0.025); x.beginPath(); x.arc(cx, cy, cr, 0, BS_TAU); x.fillStyle = '#6a645b'; x.fill(); x.restore();
+    x.save(); x.beginPath(); x.arc(cx, cy, cr, 0, BS_TAU); x.clip();
+    g = x.createLinearGradient(cx - cr, cy - cr, cx + cr, cy + cr); g.addColorStop(0, '#a29a8c'); g.addColorStop(1, '#5f5a52');
+    x.fillStyle = g; x.fillRect(cx - cr, cy - cr, cr * 2, cr * 2);
+    tex(cx - cr, cy - cr, cr * 2, cr * 2, 0.8);
+    x.beginPath(); x.arc(cx, cy, cr * 0.72, 0, BS_TAU); x.lineWidth = s * 0.008; x.strokeStyle = 'rgba(0,0,0,.2)'; x.stroke();
+    x.beginPath(); x.arc(cx + s * 0.004, cy + s * 0.004, cr * 0.72, Math.PI * 0.95, Math.PI * 1.75); x.strokeStyle = 'rgba(255,244,228,.1)'; x.stroke();
+    x.lineWidth = s * 0.018;
+    x.beginPath(); x.arc(cx, cy, cr - s * 0.009, Math.PI * 0.9, Math.PI * 1.8); x.strokeStyle = 'rgba(255,244,228,.3)'; x.stroke();
+    x.beginPath(); x.arc(cx, cy, cr - s * 0.009, -Math.PI * 0.1, Math.PI * 0.8); x.strokeStyle = 'rgba(0,0,0,.34)'; x.stroke();
+    if (rnd() < 0.75) {
+      const a = rnd() * BS_TAU; let px = cx + Math.cos(a) * cr, py = cy + Math.sin(a) * cr; const dir = a + Math.PI + (rnd() - 0.5) * 0.8;
+      x.beginPath(); x.moveTo(px, py);
+      for (let i = 0; i < 4; i++) { px += Math.cos(dir + (rnd() - 0.5) * 1.2) * cr * 0.16; py += Math.sin(dir + (rnd() - 0.5) * 1.2) * cr * 0.16; x.lineTo(px, py); }
+      x.lineWidth = s * 0.008; x.lineJoin = 'round'; x.strokeStyle = 'rgba(14,12,10,.7)'; x.stroke();
+    }
+    x.restore();
+    x.beginPath(); x.arc(cx, cy, cr, 0, BS_TAU); x.lineWidth = s * 0.01; x.strokeStyle = 'rgba(8,7,6,.9)'; x.stroke();
+    for (let i = 0, n = 1 + Math.floor(rnd() * 2); i < n; i++) {
+      const a = rnd() * BS_TAU; x.beginPath(); x.ellipse(cx + Math.cos(a) * cr, cy + Math.sin(a) * cr, s * 0.026, s * 0.017, a, 0, BS_TAU);
+      x.fillStyle = '#4a463f'; x.fill(); x.lineWidth = s * 0.006; x.strokeStyle = 'rgba(8,7,6,.6)'; x.stroke();
+    }
+  } else if (p.type === 'barrel') {
+    const r = s * (0.27 + rnd() * 0.04), bx = cx + (rnd() - 0.5) * s * 0.12, by = cy + (rnd() - 0.5) * s * 0.12, sr = r * 0.88, lr = r * 0.68;
+    x.save(); cast(); x.beginPath(); x.arc(bx, by, r, 0, BS_TAU); x.fillStyle = '#2c2c30'; x.fill(); x.restore(); // the top hoop
+    // stave ends in a ring around the head
+    x.save(); x.beginPath(); x.arc(bx, by, sr, 0, BS_TAU); x.arc(bx, by, lr, 0, BS_TAU, true); x.clip('evenodd');
+    x.fillStyle = '#7a5530'; x.fillRect(bx - sr, by - sr, sr * 2, sr * 2);
+    x.lineWidth = s * 0.007; x.strokeStyle = 'rgba(28,14,4,.75)'; x.beginPath();
+    for (let i = 0, n = 15, a0 = rnd(); i < n; i++) { const a = a0 + i * BS_TAU / n; x.moveTo(bx + Math.cos(a) * lr, by + Math.sin(a) * lr); x.lineTo(bx + Math.cos(a) * sr, by + Math.sin(a) * sr); }
+    x.stroke(); x.restore();
+    // the head: boards across, sunk below the staves
+    x.save(); x.beginPath(); x.arc(bx, by, lr, 0, BS_TAU); x.clip();
+    const g = x.createLinearGradient(bx - lr, by - lr, bx + lr, by + lr); g.addColorStop(0, '#8c6239'); g.addColorStop(1, '#583b1f');
+    x.fillStyle = g; x.fillRect(bx - lr, by - lr, lr * 2, lr * 2);
+    x.save(); x.translate(bx, by); x.rotate(rnd() * Math.PI); x.strokeStyle = 'rgba(40,22,8,.6)'; x.lineWidth = s * 0.008;
+    x.beginPath(); for (const f of [-0.5, 0, 0.5]) { x.moveTo(f * lr, -lr); x.lineTo(f * lr, lr); } x.stroke(); x.restore();
+    x.save(); shade(0.04, 0.012, 0.016, 0.7); x.beginPath(); x.arc(bx, by, lr + s * 0.3, 0, BS_TAU); x.arc(bx, by, lr, 0, BS_TAU, true); x.fillStyle = '#000'; x.fill('evenodd'); x.restore();
+    x.beginPath(); x.arc(bx + lr * 0.42, by + lr * 0.12, s * 0.02, 0, BS_TAU); x.fillStyle = '#24160a'; x.fill();
+    x.restore();
+    x.lineWidth = s * 0.01;
+    x.beginPath(); x.arc(bx, by, r - s * 0.012, Math.PI * 1.0, Math.PI * 1.6); x.strokeStyle = 'rgba(214,218,228,.35)'; x.stroke();
+    x.beginPath(); x.arc(bx, by, r, 0, BS_TAU); x.lineWidth = s * 0.009; x.strokeStyle = '#0b0b0d'; x.stroke();
   } else if (p.type === 'crate') {
     const a = s * (0.29 + rnd() * 0.04), f = a * 0.2;
     x.translate(cx + (rnd() - 0.5) * s * 0.08, cy + (rnd() - 0.5) * s * 0.08); x.rotate((rnd() - 0.5) * 0.3);
-    x.save(); shade(0.08, 0.03, 0.05); x.fillStyle = '#4a321b'; x.fillRect(-a, -a, a * 2, a * 2); x.restore();
+    x.save(); cast(); x.fillStyle = '#4a321b'; x.fillRect(-a, -a, a * 2, a * 2); x.restore();
     const g = x.createLinearGradient(-a, -a, a, a); g.addColorStop(0, '#946a3f'); g.addColorStop(1, '#5c3d20');
     x.fillStyle = g; x.fillRect(-a, -a, a * 2, a * 2);
+    x.save(); x.beginPath(); x.rect(-a, -a, a * 2, a * 2); x.clip(); tex(-a, -a, a * 2, a * 2, 0.45); x.restore();
     x.strokeStyle = 'rgba(40,24,10,.5)'; x.lineWidth = s * 0.007;
     for (const q of [-1 / 3, 1 / 3]) { x.beginPath(); x.moveTo(-a, q * a * 2); x.lineTo(a, q * a * 2); x.stroke(); }
     x.strokeStyle = '#3e2813'; x.lineWidth = f * 0.9; x.strokeRect(-a + f * 0.45, -a + f * 0.45, a * 2 - f * 0.9, a * 2 - f * 0.9);
     x.beginPath(); x.moveTo(-a + f, a - f); x.lineTo(a - f, -a + f); x.stroke();
+    x.strokeStyle = 'rgba(255,226,186,.16)'; x.lineWidth = s * 0.008; x.beginPath(); x.moveTo(-a + s * 0.006, a); x.lineTo(-a + s * 0.006, -a + s * 0.006); x.lineTo(a, -a + s * 0.006); x.stroke();
     x.strokeStyle = '#1c1209'; x.lineWidth = s * 0.012; x.strokeRect(-a, -a, a * 2, a * 2);
     x.fillStyle = 'rgba(20,14,8,.85)';
     for (const [nx, ny] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { x.beginPath(); x.arc(nx * (a - f * 0.45), ny * (a - f * 0.45), s * 0.01, 0, BS_TAU); x.fill(); }
@@ -946,7 +1160,7 @@ function bsProp(x, p, plan, k) {
       const m = 5 + Math.floor(rnd() * 3), a0 = rnd() * BS_TAU, pts = [];
       for (let j = 0; j < m; j++) { const a = a0 + j * BS_TAU / m + (rnd() - 0.5) * 0.6, rr = sz * (0.7 + rnd() * 0.45); pts.push([sx + Math.cos(a) * rr, sy + Math.sin(a) * rr]); }
       const L = 26 + rnd() * 16, hue = 28 + rnd() * 14;
-      x.save(); shade(0.035, 0.012, 0.022, 0.65); x.beginPath(); bsPolyPath(x, pts); x.fillStyle = `hsl(${hue},7%,${L}%)`; x.fill(); x.restore();
+      x.save(); cast(0.3, Math.min(0.03, sz / s * 0.5), 0.012); x.beginPath(); bsPolyPath(x, pts); x.fillStyle = `hsl(${hue},7%,${L}%)`; x.fill(); x.restore();
       const g = x.createLinearGradient(sx - sz, sy - sz, sx + sz, sy + sz); g.addColorStop(0, `hsl(${hue},8%,${L + 12}%)`); g.addColorStop(1, `hsl(${hue},7%,${L - 8}%)`);
       x.beginPath(); bsPolyPath(x, pts); x.fillStyle = g; x.fill(); x.lineWidth = s * 0.006; x.strokeStyle = 'rgba(0,0,0,.45)'; x.stroke();
     }
@@ -998,9 +1212,11 @@ function bsGlyph(emoji, size) {
 /* ---------- token emblems ----------
    Every token without a portrait gets a silhouette: a class emblem for PCs (from the character's
    klass), a creature emblem for monsters (from the bestiary id, else the name). All are vector paths in
-   one hand: drawn in a 100-unit box centred on 0,0, filled in bone (#EDE6DA) with details cut through to
-   the disc, line work at 4.5 units (≈2.5 px on a Medium token at 100%). */
-const BS_EMBLEM_INK = '#EDE6DA';
+   one hand: drawn in a 100-unit box centred on 0,0, filled in bone (#D9D0C0) with details cut through to
+   the disc, line work at 4.5 units (≈2.5 px on a Medium token at 100%). On a token they are set at 85%
+   with a soft inner shadow and a slight bevel (bsEmblemStyled), so they read as carved, not as the
+   brightest thing on the map. */
+const BS_EMBLEM_INK = '#D9D0C0';
 const BS_CLASS_ICONS = [[/fighter|warrior|soldier|knight/, 'fighter'], [/rogue|thief|assassin|swashbuckler/, 'rogue'], [/wizard|mage|bladesinger/, 'wizard'],
   [/cleric|priest/, 'cleric'], [/ranger|hunter|archer/, 'ranger'], [/sorcer/, 'sorcerer'], [/warlock|hexblade/, 'warlock'], [/bard/, 'bard'],
   [/paladin/, 'paladin'], [/barbarian|berserk/, 'barbarian'], [/druid/, 'druid'], [/monk/, 'monk'], [/artificer|tinker/, 'artificer']];
@@ -1221,10 +1437,25 @@ function bsEmblemCanvas(id, size) {
   BS_EMBLEMS.set(key, c);
   return c;
 }
+// an emblem as set into a token: a soft inner shadow all round its edge and a slight bevel (lit from the top left)
+function bsEmblemStyled(id, size) {
+  const key = 'st|' + id + '|' + size; let c = BS_EMBLEMS.get(key); if (c) return c;
+  const em = bsEmblemCanvas(id, size), u = size / 100;
+  const inv = bsCanvas(size, size), ix = inv.getContext('2d');
+  ix.fillStyle = '#000'; ix.fillRect(0, 0, size, size); ix.globalCompositeOperation = 'destination-out'; ix.drawImage(em, 0, 0);
+  c = bsCanvas(size, size); const x = c.getContext('2d');
+  x.drawImage(em, 0, 0);
+  x.globalCompositeOperation = 'source-atop';
+  for (const [col, blur, dx, dy] of [['rgba(40,30,20,.42)', 3.2 * u, 0, 0], ['rgba(255,250,240,.32)', 1.2 * u, 1 * u, 1.1 * u], ['rgba(30,20,12,.5)', 1.4 * u, -1 * u, -1.2 * u]]) {
+    x.save(); x.shadowColor = col; x.shadowBlur = blur; x.shadowOffsetX = dx; x.shadowOffsetY = dy; x.drawImage(inv, 0, 0); x.restore();
+  }
+  BS_EMBLEMS.set(key, c);
+  return c;
+}
 // the deep disc behind an emblem, faintly tinted by side
-const BS_DISC_TONES = { pc: ['#2e3341', '#14171f'], ally: ['#253a2e', '#0f1913'], foe: ['#452427', '#1b0c0e'], neutral: ['#43341f', '#1a130a'] };
-/* A token without a portrait: a flat, deep disc (no sphere highlight) with the emblem at 60% of its
-   diameter. Kept under its old name: it is what every generated token is drawn with. */
+const BS_DISC_TONES = { pc: ['#262b37', '#0c0e14'], ally: ['#22302a', '#0a110d'], foe: ['#3b1c1f', '#120607'], neutral: ['#372b1b', '#120d06'] };
+/* A token without a portrait: a flat, deep disc (no sphere highlight) with the emblem at ~60% of its
+   diameter, in bone at 85%. Kept under its old name: it is what every generated token is drawn with. */
 function bsGenDisc(x, info, px) {
   const r = px / 2, tone = BS_DISC_TONES[info.kind] || BS_DISC_TONES.neutral, rnd = bsRng(bsHash(info.base + '|' + info.kind));
   const g = x.createRadialGradient(r, r * 0.82, r * 0.1, r, r, r);
@@ -1235,8 +1466,8 @@ function bsGenDisc(x, info, px) {
   x.globalCompositeOperation = 'overlay'; x.globalAlpha = 0.07; x.drawImage(bsNoise(), rnd() * 100, rnd() * 100, 128, 128, 0, 0, px, px);
   x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1;
   // the emblem box is a little larger than 60% because the shapes stop short of its edges: they read at ~60%
-  const S = Math.round(px * 0.66), em = bsEmblemCanvas(info.icon || bsIconFor(info), S);
-  x.save(); x.shadowColor = 'rgba(0,0,0,.65)'; x.shadowBlur = px * 0.03; x.shadowOffsetY = px * 0.014;
+  const S = Math.round(px * 0.64), em = bsEmblemStyled(info.icon || bsIconFor(info), S);
+  x.save(); x.globalAlpha = 0.85; x.shadowColor = 'rgba(0,0,0,.6)'; x.shadowBlur = px * 0.025; x.shadowOffsetY = px * 0.012;
   x.drawImage(em, Math.round(r - S / 2), Math.round(r - S / 2));
   x.restore();
 }
@@ -1307,13 +1538,23 @@ function bsGlowSprite() {
   x.fillStyle = g; x.fillRect(0, 0, 256, 256);
   return (BS_GLOW = c);
 }
-// one bevelled metal ring in the side colour, with hairlines so it reads on any floor
+/* The one token frame: a ring in the disposition colour (3px on the map), a 1px black keyline outside it
+   and a hairline inside, so it reads on any floor; the faintest lift on its top-left arc. */
 function bsBezel(x, X, Y, R, ring, col) {
-  x.beginPath(); x.arc(X, Y, R - ring / 2, 0, BS_TAU); x.lineWidth = ring; x.strokeStyle = bsRingStyle(x, X, Y, R, col); x.stroke();
+  x.beginPath(); x.arc(X, Y, R - ring / 2, 0, BS_TAU); x.lineWidth = ring; x.strokeStyle = col; x.stroke();
+  if (ring >= 2) { x.beginPath(); x.arc(X, Y, R - ring / 2, Math.PI * 1.05, Math.PI * 1.6); x.strokeStyle = 'rgba(255,255,255,.18)'; x.stroke(); }
   x.lineWidth = 1;
-  x.beginPath(); x.arc(X, Y, R + 0.3, 0, BS_TAU); x.strokeStyle = 'rgba(0,0,0,.6)'; x.stroke();
-  x.beginPath(); x.arc(X, Y, R - ring - 0.3, 0, BS_TAU); x.strokeStyle = 'rgba(0,0,0,.42)'; x.stroke();
-  if (ring >= 2) { x.beginPath(); x.arc(X, Y, R - ring * 0.6, Math.PI * 1.1, Math.PI * 1.5); x.lineWidth = Math.max(0.6, ring * 0.3); x.lineCap = 'round'; x.strokeStyle = 'rgba(255,255,255,.42)'; x.stroke(); x.lineCap = 'butt'; }
+  x.beginPath(); x.arc(X, Y, R + 0.5, 0, BS_TAU); x.strokeStyle = 'rgba(0,0,0,.9)'; x.stroke();
+  x.beginPath(); x.arc(X, Y, R - ring - 0.3, 0, BS_TAU); x.lineWidth = 0.75; x.strokeStyle = 'rgba(0,0,0,.45)'; x.stroke();
+}
+// the DM's HP bar: h px tall, rounded, on a dark track inside a 1px black keyline; green, amber, then red
+function bsHpBar(x, X, Y, w, h, f, dpr = 1) {
+  const al = v => Math.round(v * dpr) / dpr; X = al(X); Y = al(Y);
+  x.save();
+  bsRoundRect(x, X - 1, Y - 1, w + 2, h + 2, (h + 2) / 2); x.fillStyle = 'rgba(0,0,0,.85)'; x.fill();
+  bsRoundRect(x, X, Y, w, h, h / 2); x.fillStyle = '#2a2c33'; x.fill();
+  if (f > 0) { bsRoundRect(x, X, Y, Math.max(h, w * f), h, h / 2); x.fillStyle = f > 0.5 ? '#5ec46e' : f > 0.25 ? '#e0a63a' : '#d64545'; x.fill(); }
+  x.restore();
 }
 /* HP gauge: an arc segment just inside the ring along the bottom of the disc, filling left to right.
    f = 0..1 (GM), or null for the players' plain "bloodied" mark. */
@@ -1396,6 +1637,8 @@ function bsPill(x, text, cx, top, opt = {}) {
    it is also the colour of the fog, so the two never show a seam.
    pcLabels (TV only): a name chip under every PC token, sized for a TV (view.pcLabels too).
    gmFog (GM only, default true): false hides the fog overlay on the DM's map (view.gmFog too).
+   tplHover (GM only, default true): track the pointer to show a hovered template's affected squares.
+   view.hoverDrawing: optional; set it (a drawing or its id, null for none) to drive that hover yourself.
    Set data with setScene / setEncounter / setChars and transient overlays through view.live; call
    request() after changing anything. */
 const BS_VIEWS = new Set();
@@ -1424,10 +1667,29 @@ class BattleView {
     this._redraw = () => this.request();
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas.parentElement);
+    // the DM's view tracks which template the pointer is over, to show its affected squares (unless the
+    // host sets view.hoverDrawing itself)
+    this.hoverDrawing = undefined; this._hovTpl = null;
+    if (!this.player && opts.tplHover !== false) {
+      this._hovEl = canvas.parentElement;
+      this._onHov = e => {
+        if (e.buttons || this.hoverDrawing !== undefined) return;
+        const r = this.cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+        let hit = null;
+        if (!this.hover && !this.hitToken(sx, sy)) { const d = this.hitDrawing(sx, sy); if (d && d.type === 'template') hit = d.id != null ? d.id : d; }
+        if (hit !== this._hovTpl) { this._hovTpl = hit; this.request(); }
+      };
+      this._onHovOut = () => { if (this._hovTpl != null) { this._hovTpl = null; this.request(); } };
+      this._hovEl.addEventListener('pointermove', this._onHov, { passive: true });
+      this._hovEl.addEventListener('pointerleave', this._onHovOut, { passive: true });
+    }
     BS_VIEWS.add(this);
     this.resize();
   }
-  destroy() { this.dead = true; BS_VIEWS.delete(this); this.ro.disconnect(); if (this.raf) cancelAnimationFrame(this.raf); }
+  destroy() {
+    this.dead = true; BS_VIEWS.delete(this); this.ro.disconnect(); if (this.raf) cancelAnimationFrame(this.raf);
+    if (this._hovEl) { this._hovEl.removeEventListener('pointermove', this._onHov); this._hovEl.removeEventListener('pointerleave', this._onHovOut); this._hovEl = null; }
+  }
   resize() {
     const r = this.cv.parentElement.getBoundingClientRect();
     const dpr = Math.min(window.devicePixelRatio || 1, 2.5), W = Math.max(1, Math.round(r.width)), H = Math.max(1, Math.round(r.height));
@@ -1592,22 +1854,32 @@ class BattleView {
     anim = this.drawOverlays(sc, now) || anim;
     return anim;
   }
-  // the floor's walls again as vectors over the bitmap (which softens at high zoom): wall cores and doors
+  /* The floor's walls, doors and sconces, as vectors over the bitmap each frame (so they stay crisp at
+     any zoom): a stone band ~9 px thick at 100% with a lit inner edge and mortar joints. */
   drawWalls(w, h) {
     const src = this._floorSrc; if (!src || !(src.plan || src.perimeter)) return;
-    const { ctx, dpr, cam } = this, k = dpr * cam.z;
+    const { ctx, dpr, cam } = this, k = dpr * cam.z, z = cam.z;
+    if (!this._wallPat || this._wallPatCtx !== ctx) {
+      this._wallPat = ctx.createPattern(bsWallTex(), 'repeat'); this._wallPatCtx = ctx;
+      if (this._wallPat && this._wallPat.setTransform && typeof DOMMatrix === 'function') this._wallPat.setTransform(new DOMMatrix().scale(0.7));
+    }
+    const pat = this._wallPat;
     ctx.save(); ctx.setTransform(k, 0, 0, k, dpr * cam.x, dpr * cam.y);
     ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip();
-    ctx.strokeStyle = '#050607';
-    if (src.perimeter) { ctx.lineWidth = src.perimeter * 2; ctx.strokeRect(0, 0, w, h); }
-    else {
+    if (src.perimeter) {
+      // centred on the map's edge, so the half inside the map is the wall's full thickness
+      const T = src.perimeter, edge = this._edgePath && this._edgeKey === w + 'x' + h ? this._edgePath : (this._edgePath = new Path2D());
+      if (this._edgeKey !== w + 'x' + h) { edge.rect(0, 0, w, h); this._edgeKey = w + 'x' + h; }
+      bsWallBand(ctx, edge, { T: T * 2 }, z, pat, null, null);
+      ctx.lineWidth = Math.min(T * 0.4, 1.6 / z); ctx.strokeStyle = '#b9b0a0';
+      ctx.strokeRect(T - ctx.lineWidth / 2, T - ctx.lineWidth / 2, w - T * 2 + ctx.lineWidth, h - T * 2 + ctx.lineWidth);
+      ctx.lineWidth = 1.2 / z; ctx.strokeStyle = '#060708'; ctx.strokeRect(T + 0.6 / z, T + 0.6 / z, w - T * 2 - 1.2 / z, h - T * 2 - 1.2 / z);
+    } else {
       const p = src.plan, vr = this.viewRect(), m = p.s;
-      ctx.lineCap = 'square'; ctx.lineWidth = p.s * 0.06; ctx.stroke(p.walls);
-      for (const d of p.doors) {
-        const dx = p.ox + d.in[0] * p.s, dy = p.oy + d.in[1] * p.s;
-        if (dx > vr.x + vr.w + m || dy > vr.y + vr.h + m || dx + m * 2 < vr.x || dy + m * 2 < vr.y) continue;
-        bsDoor(ctx, d, p, k);
-      }
+      bsWallBand(ctx, p.walls, bsWallDetail(p), z, pat, p.path, p.rock);
+      const near = (X, Y) => !(X > vr.x + vr.w + m || Y > vr.y + vr.h + m || X + m * 2 < vr.x || Y + m * 2 < vr.y);
+      for (const d of p.doors) if (near(p.ox + d.in[0] * p.s, p.oy + d.in[1] * p.s)) bsDoor(ctx, d, p, k, z, pat);
+      for (const L of p.lights) if (near(L.x - m, L.y - m)) bsSconce(ctx, L, p, z);
     }
     ctx.restore();
   }
@@ -1675,11 +1947,15 @@ class BattleView {
     ctx.stroke();
     ctx.restore();
   }
-  /* One labelled style for every template: an 18% fill of its colour, the affected squares tinted to
-     30%, a 2px solid stroke at 85% (dashed only while it is being placed), and a chip at the origin
-     ("Web · 15 ft cube"). Handles show on the DM's view only, and only while selected or placing. */
-  drawTemplate(sc, d, selected, preview, bodyOnly) {
+  /* One labelled style for every template: the shape alone, an 18% fill of its colour and a 2px stroke
+     at 85% (dashed only while it is being placed), with a chip at the origin ("Web · 15 ft cube"). The
+     affected squares show on the DM's view only for the template being placed, selected or hovered: a
+     light tint and a stepped 1px outline. Handles show on the DM's view only, while selected or placing.
+     mode: undefined (all), 'body' (no chip, no handles) or 'outline' (a faint outline only). */
+  drawTemplate(sc, d, selected, preview, mode) {
     const { ctx, dpr } = this, g = bsTpl(sc, d), col = d.color || '#f97316', z = this.cam.z, P = this.player;
+    const bodyOnly = !!mode, hov = this.hoverDrawing !== undefined ? this.hoverDrawing : this._hovTpl;
+    const hovered = !P && hov != null && (hov === d || (d.id != null && (hov === d.id || hov.id === d.id)));
     ctx.save();
     const [ox, oy] = this.toScreen(g.o[0], g.o[1]);
     const shape = () => {
@@ -1688,14 +1964,28 @@ class BattleView {
       else g.poly.forEach((p, i) => { const [X, Y] = this.toScreen(p[0], p[1]); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
       ctx.closePath();
     };
+    if (mode === 'outline') {
+      shape(); ctx.lineJoin = 'round'; ctx.lineWidth = 1.5; ctx.strokeStyle = bsRgba(col, 0.32); ctx.setLineDash([6, 5]); ctx.stroke();
+      ctx.restore(); return;
+    }
+    // on a dungeon the colour stays on the floor (a spell does not fill solid rock); the outline is whole
+    ctx.save();
+    if (this._floorClip) { const cam = this.cam; ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * cam.x, dpr * cam.y); ctx.clip(this._floorClip); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
     shape(); ctx.fillStyle = bsRgba(col, 0.18); ctx.fill();
     const s = bsGrid(sc).size * z;
-    if (s >= 6) {
-      const al = v => Math.round(v * dpr) / dpr;
+    if (!P && (selected || preview || hovered) && s >= 6) {
+      const cells = bsTplCellsCached(sc, d, g), al = v => Math.round(v * dpr) / dpr, half = 0.5 / dpr;
       ctx.beginPath();
-      for (const [cx, cy] of bsTplCellsCached(sc, d, g)) { const [X, Y] = this.toScreen(cx, cy), X0 = al(X), Y0 = al(Y); ctx.rect(X0, Y0, al(X + s) - X0, al(Y + s) - Y0); }
-      ctx.fillStyle = bsRgba(col, 0.146); ctx.fill(); // over the 18% fill: 30% in all
+      for (const [cx, cy] of cells) { const [X, Y] = this.toScreen(cx, cy), X0 = al(X), Y0 = al(Y); ctx.rect(X0, Y0, al(X + s) - X0, al(Y + s) - Y0); }
+      ctx.fillStyle = bsRgba(col, 0.1); ctx.fill();
+      ctx.beginPath();
+      for (const [x0, y0, x1, y1] of bsTplOutline(cells, bsGrid(sc).size)) {
+        const [X0, Y0] = this.toScreen(x0, y0), [X1, Y1] = this.toScreen(x1, y1);
+        ctx.moveTo(al(X0) + half, al(Y0) + half); ctx.lineTo(al(X1) + half, al(Y1) + half);
+      }
+      ctx.lineWidth = 1 / dpr * Math.max(1, Math.round(dpr)); ctx.lineCap = 'square'; ctx.strokeStyle = bsRgba(col, 0.75); ctx.stroke();
     }
+    ctx.restore();
     shape(); ctx.lineJoin = 'round'; ctx.lineWidth = 2; ctx.strokeStyle = bsRgba(col, 0.85);
     if (preview) ctx.setLineDash([7, 5]);
     ctx.stroke(); ctx.setLineDash([]);
@@ -1706,11 +1996,12 @@ class BattleView {
     ctx.restore();
     if (bodyOnly) return;
     const name = String(d.name || d.label || '').trim();
-    const chip = { text: `${name ? name + ' · ' : ''}${g.ft} ft ${BS_TPL_NAMES[g.shape] || ''}`.trim(), col, ox, oy, ux: Math.cos(g.a), uy: Math.sin(g.a), len: g.L * z, circle: g.r != null };
+    const chip = { text: `${name ? name + ' · ' : ''}${g.ft} ft ${BS_TPL_NAMES[g.shape] || ''}`.trim(), col, ox, oy, ux: Math.cos(g.a), uy: Math.sin(g.a), len: g.L * z, circle: g.r != null, r: g.r != null ? g.r * z : 0 };
     if (preview) this.drawChips([chip]); else (this._chips || (this._chips = [])).push(chip);
   }
-  /* The TV: the fog covers templates in the dark; draw them again into a layer, keep only where the fog
-     is (destination-in the fog mask), and lay that on top. Clear areas keep the template under the tokens. */
+  /* The TV: a template's fill stays in revealed ground (it is drawn under the fog, which covers the
+     rest); over the fog only a faint dashed outline shows, so the players can tell where it reaches but
+     no colour is ever painted over unrevealed black. Drawn into a layer, kept where the fog is. */
   drawTemplatesOverFog(sc, w, h, tpls) {
     const { cv, dpr, cam } = this, m = this.fogMask(sc, w, h);
     let L = this._layer;
@@ -1719,14 +2010,23 @@ class BattleView {
     lx.setTransform(1, 0, 0, 1, 0, 0); lx.globalCompositeOperation = 'source-over'; lx.clearRect(0, 0, L.width, L.height);
     lx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.ctx = lx;
-    try { for (const d of tpls) this.drawTemplate(sc, d, false, false, true); } finally { this.ctx = main; }
+    try { for (const d of tpls) this.drawTemplate(sc, d, false, false, 'outline'); } finally { this.ctx = main; }
     const s = dpr * cam.z / m.k;
     lx.save(); lx.globalCompositeOperation = 'destination-in'; lx.setTransform(s, 0, 0, s, dpr * cam.x, dpr * cam.y); lx.imageSmoothingEnabled = true; lx.drawImage(m.canvas, 0, 0); lx.restore();
     main.save(); main.setTransform(1, 0, 0, 1, 0, 0); main.drawImage(L, 0, 0); main.restore();
   }
+  // the TV's fog coverage at a screen point: 0 clear … 1 dark (0 when there is no fog)
+  fogAt(sx, sy) {
+    const sc = this.scene; if (!this.player || !sc || !sc.fog || !sc.fog.on) return 0;
+    const f = this._fog; if (!f || !f.cov) return 0;
+    const [x, y] = this.toScene(sx, sy), X = Math.floor(x * f.k), Y = Math.floor(y * f.k);
+    if (X < 0 || Y < 0 || X >= f.cw || Y >= f.ch) return 1;
+    return f.cov[Y * f.cw + X];
+  }
   /* Template chips (11px/600 on a dark pill; TV-sized on the TV), after the tokens and the fog so they
      always read. Each sits at its template's origin (inside the shape, just past the caster, for cones,
-     lines and cubes), moved along the template if a token is in the way. */
+     lines and cubes), moved along the template if a token is in the way. On the TV a chip only sits on
+     revealed ground: a template wholly in the dark has none. */
   drawChips(list) {
     const L = list || this._chips; if (!L || !L.length) return;
     const { ctx, dpr } = this, P = this.player, fs = P ? bsClamp(Math.round(this.H * 14 / 1080), 12, 24) : 11;
@@ -1736,80 +2036,114 @@ class BattleView {
       for (const p of placed) if (r.x < p.x + p.w + 3 && p.x < r.x + r.w + 3 && r.y < p.y + p.h + 3 && p.y < r.y + r.h + 3) return true;
       return false;
     };
+    const dark = r => P && Math.max(this.fogAt(r.x, r.y), this.fogAt(r.x + r.w, r.y), this.fogAt(r.x, r.y + r.h), this.fogAt(r.x + r.w, r.y + r.h)) > 0.45;
     for (const c of L) {
       const opt = { size: fs, weight: 600, dot: c.col, bg: 'rgba(12,14,19,.88)', border: 'rgba(255,255,255,.14)', dpr };
       const m = bsPillMeasure(ctx, c.text, opt), cands = [];
-      if (c.circle) { cands.push([c.ox, c.oy]); for (const k of [1, -1, 2, -2, 3, -3]) cands.push([c.ox, c.oy + k * (m.h + 6)]); }
-      else {
+      if (c.circle) {
+        cands.push([c.ox, c.oy]); for (const k of [1, -1, 2, -2, 3, -3]) cands.push([c.ox, c.oy + k * (m.h + 6)]);
+        if (P) for (const f of [0.45, 0.75]) for (let i = 0; i < 8; i++) { const a = i * BS_TAU / 8; cands.push([c.ox + Math.cos(a) * c.r * f, c.oy + Math.sin(a) * c.r * f]); }
+      } else {
         const half = Math.abs(c.ux) * m.w / 2 + Math.abs(c.uy) * m.h / 2;
         for (let t = half + 8; t <= Math.max(half + 8, c.len - half); t += 12) cands.push([c.ox + c.ux * t, c.oy + c.uy * t]);
       }
-      let at = cands[0];
-      for (const q of cands) if (!hit({ x: q[0] - m.w / 2, y: q[1] - m.h / 2, w: m.w, h: m.h })) { at = q; break; }
-      const r = { x: at[0] - m.w / 2, y: at[1] - m.h / 2, w: m.w, h: m.h };
+      const rect = q => ({ x: q[0] - m.w / 2, y: q[1] - m.h / 2, w: m.w, h: m.h });
+      const lit = P ? cands.filter(q => !dark(rect(q))) : cands;
+      if (!lit.length) continue;
+      let at = lit[0];
+      for (const q of lit) if (!hit(rect(q))) { at = q; break; }
+      const r = rect(at);
       placed.push(r);
       ctx.save(); bsPillDraw(ctx, m, r.x, r.y, opt); ctx.restore();
     }
   }
   /* Drawings share the template language: solid strokes (dashed only while being drawn), an 18% fill.
-     A DM-only drawing is marked with a small eye-off badge on the DM's view instead of dashes. */
+     A DM-only drawing is marked on the DM's view by a 45° hatch inside it (lines at ~20% of its colour,
+     8 px apart at 100%) and a "DM only" chip at its top-left corner; the players never see it. */
   drawShape(sc, d, selected, preview) {
-    const { ctx } = this, z = this.cam.z, p = (d.pts || []).map(q => this.toScreen(q[0], q[1]));
+    const { ctx, dpr } = this, z = this.cam.z, p = (d.pts || []).map(q => this.toScreen(q[0], q[1]));
     if (!p.length) return;
-    const col = d.color || '#f8fafc', lw = Math.max(1.25, (d.width || 4) * z);
+    const col = d.color || '#f8fafc', lw = Math.max(1.25, (d.width || 4) * z), area = (d.type === 'rect' || d.type === 'circle') && p[1];
+    const dm = d.dmOnly && !this.player && !preview;
     ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    ctx.beginPath();
-    if (d.type === 'path') {
-      ctx.moveTo(p[0][0], p[0][1]);
-      if (p.length < 3) p.slice(1).forEach(q => ctx.lineTo(q[0], q[1])); else { for (let i = 1; i < p.length - 1; i++) ctx.quadraticCurveTo(p[i][0], p[i][1], (p[i][0] + p[i + 1][0]) / 2, (p[i][1] + p[i + 1][1]) / 2); ctx.lineTo(p[p.length - 1][0], p[p.length - 1][1]); }
-      if (p.length === 1) ctx.lineTo(p[0][0] + 0.01, p[0][1]);
-    } else if (d.type === 'line') { ctx.moveTo(p[0][0], p[0][1]); ctx.lineTo((p[1] || p[0])[0], (p[1] || p[0])[1]); }
-    else if (d.type === 'rect' && p[1]) ctx.rect(Math.min(p[0][0], p[1][0]), Math.min(p[0][1], p[1][1]), Math.abs(p[1][0] - p[0][0]), Math.abs(p[1][1] - p[0][1]));
-    else if (d.type === 'circle' && p[1]) ctx.arc(p[0][0], p[0][1], Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1]), 0, BS_TAU);
-    if (d.fill && (d.type === 'rect' || d.type === 'circle')) { ctx.fillStyle = bsRgba(col, 0.18); ctx.fill(); }
+    const path = () => {
+      ctx.beginPath();
+      if (d.type === 'path') {
+        ctx.moveTo(p[0][0], p[0][1]);
+        if (p.length < 3) p.slice(1).forEach(q => ctx.lineTo(q[0], q[1])); else { for (let i = 1; i < p.length - 1; i++) ctx.quadraticCurveTo(p[i][0], p[i][1], (p[i][0] + p[i + 1][0]) / 2, (p[i][1] + p[i + 1][1]) / 2); ctx.lineTo(p[p.length - 1][0], p[p.length - 1][1]); }
+        if (p.length === 1) ctx.lineTo(p[0][0] + 0.01, p[0][1]);
+      } else if (d.type === 'line') { ctx.moveTo(p[0][0], p[0][1]); ctx.lineTo((p[1] || p[0])[0], (p[1] || p[0])[1]); }
+      else if (d.type === 'rect' && p[1]) ctx.rect(Math.min(p[0][0], p[1][0]), Math.min(p[0][1], p[1][1]), Math.abs(p[1][0] - p[0][0]), Math.abs(p[1][1] - p[0][1]));
+      else if (d.type === 'circle' && p[1]) ctx.arc(p[0][0], p[0][1], Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1]), 0, BS_TAU);
+    };
+    path();
+    if (d.fill && area) { ctx.fillStyle = bsRgba(col, dm ? 0.1 : 0.18); ctx.fill(); }
+    if (dm && area) {
+      // the hatch, clipped to the shape
+      ctx.save(); ctx.clip();
+      const xs = p.map(q => q[0]), ys = p.map(q => q[1]);
+      let x0 = Math.min(...xs), y0 = Math.min(...ys), x1 = Math.max(...xs), y1 = Math.max(...ys);
+      if (d.type === 'circle') { const R = Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1]); x0 = p[0][0] - R; y0 = p[0][1] - R; x1 = p[0][0] + R; y1 = p[0][1] + R; }
+      // lines x + y = c, 8 px apart at 100%, anchored to the map so they do not crawl as the view pans
+      const gap = Math.max(4, 8 * z), [ax, ay] = this.toScreen(0, 0), base = ax + ay;
+      ctx.beginPath();
+      for (let c = base + Math.ceil((x0 + y0 - base) / gap) * gap; c <= x1 + y1; c += gap) { ctx.moveTo(c - y0, y0); ctx.lineTo(c - y1, y1); }
+      ctx.lineWidth = 1; ctx.lineCap = 'butt'; ctx.strokeStyle = bsRgba(col, 0.22); ctx.stroke();
+      ctx.restore();
+      path();
+    }
     if (preview) ctx.setLineDash([lw * 2.2, lw * 1.8]);
     ctx.lineWidth = lw + 2.5; ctx.strokeStyle = 'rgba(0,0,0,.32)'; ctx.stroke();
-    ctx.lineWidth = lw; ctx.strokeStyle = bsRgba(col, d.type === 'rect' || d.type === 'circle' ? 0.85 : 1); ctx.stroke();
+    ctx.lineWidth = lw; ctx.strokeStyle = bsRgba(col, area ? 0.85 : 1); ctx.stroke();
     ctx.setLineDash([]);
     if (selected && !this.player) {
       ctx.lineWidth = lw + 7; ctx.strokeStyle = 'rgba(127,209,201,.35)'; ctx.stroke();
       ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.stroke();
     }
-    if (d.dmOnly && !this.player && !preview) {
-      // badge at the shape's top-left: an eye with a slash
-      const xs = p.map(q => q[0]), ys = p.map(q => q[1]);
-      let bx = Math.min(...xs), by = Math.min(...ys);
-      if (d.type === 'circle' && p[1]) { const R = Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1]); bx = p[0][0] - R * 0.71; by = p[0][1] - R * 0.71; }
-      ctx.beginPath(); ctx.arc(bx, by, 9, 0, BS_TAU); ctx.fillStyle = 'rgba(12,14,19,.9)'; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = bsRgba(col, 0.9); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(bx, by, 5, 3, 0, 0, BS_TAU); ctx.lineWidth = 1.3; ctx.strokeStyle = '#fff'; ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(bx - 5, by + 4.5); ctx.lineTo(bx + 5, by - 4.5); ctx.stroke();
-    }
     ctx.restore();
+    if (dm) {
+      // "DM only" at the top-left corner: inside it when there is room, else just above it
+      const xs = p.map(q => q[0]), ys = p.map(q => q[1]);
+      let x0 = Math.min(...xs), y0 = Math.min(...ys), x1 = Math.max(...xs), y1 = Math.max(...ys);
+      if (d.type === 'circle' && p[1]) { const R = Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1]); x0 = p[0][0] - R * 0.71; y0 = p[0][1] - R * 0.71; x1 = p[0][0] + R * 0.71; y1 = p[0][1] + R * 0.71; }
+      const opt = { size: 11, weight: 600, dot: col, bg: 'rgba(12,14,19,.88)', border: 'rgba(255,255,255,.14)', dpr };
+      const m = bsPillMeasure(ctx, 'DM only', opt), pad = 6, inside = area && x1 - x0 >= m.w + pad * 2 && y1 - y0 >= m.h + pad * 2;
+      const r = inside ? { x: x0 + pad, y: y0 + pad } : { x: x0, y: y0 - m.h - Math.max(4, lw / 2 + 3) };
+      ctx.save(); bsPillDraw(ctx, m, r.x, r.y, opt); ctx.restore();
+      (this._placed || (this._placed = [])).push({ x: r.x, y: r.y, w: m.w, h: m.h });
+    }
   }
+  /* Tokens share one frame: a soft shadow (≈ CSS 0 2px 6px rgba(0,0,0,.6)), the disc (portrait, or an
+     emblem on a deep disc), a 3px ring in the disposition colour and a 1px black keyline. Number badges
+     (14px, at 4 o'clock, clear of the ring) and the DM's 4px HP bars (under hostile tokens, and under
+     any token with hit points while it is hovered or selected) go on top of every disc. */
   drawTokens(sc, now) {
     const { ctx, dpr } = this, list = this.tokenList(), P = this.player, z = this.cam.z;
     let anim = this.tweens.size > 0;
     this.lastPos.clear();
-    const lbl = this._lbl = [], discs = this._discs = [];
+    const lbl = this._lbl = [], discs = this._discs = [], extras = [];
     for (const e of list) {
       const t = e.t; this.lastPos.set(t.id, [e.bx, e.by]);
       const [X, Y] = this.toScreen(e.x, e.y), R = e.r * z;
       if (X + R * 2 < 0 || Y + R * 2 < 0 || X - R * 2 > this.W || Y - R * 2 > this.H) continue;
       const info = bsTokenInfo(t, this.enc, this.chars, this.turnId), hidden = !!t.hidden;
-      const side = info.down ? '#7b818c' : BS_KINDS[info.kind].ring, ring = bsClamp(R * 0.068, 1.5, 3.5); // ~3px on a Medium token at 100%
+      const side = info.down ? '#7b818c' : BS_KINDS[info.kind].ring, ring = R >= 12 ? bsClamp(R * 0.06, 3, 4) : bsClamp(R * 0.22, 1.5, 3);
       const sel = !P && this.sel.has(t.id), hov = !P && this.hover === t.id, focus = sel || hov || e.dragging || info.turn;
-      const dR = R + (info.num && R >= 9 ? 3 : 1); // keep labels clear of the disc and its badge
-      discs.push({ X, Y, R: dR });
+      const badge = info.num && R >= 9, bar = !P && info.hp && R >= 9 && (info.kind === 'foe' || sel || hov);
+      // number badge: 14px on the DM's map, TV-sized on the TV, at 4 o'clock just clear of the ring
+      const br = P ? bsClamp(Math.round(this.H * 11 / 1080), 7, 16) : 7, bd = R + br + 1.5;
+      discs.push({ X, Y, R: R + 1.5, id: t.id });
+      if (badge) discs.push({ X: X + Math.cos(Math.PI / 6) * bd, Y: Y + Math.sin(Math.PI / 6) * bd, R: br, id: t.id });
       ctx.save();
       if (hidden) ctx.globalAlpha = 0.5;
       // lifted off the floor; higher while carried
       const sh = bsShadowSprite(), lift = e.dragging ? 1 : 0, ss = 2.56 * R * (1 + lift * 0.1);
-      ctx.save(); ctx.globalAlpha *= lift ? 0.42 : 0.55; ctx.drawImage(sh, X - ss / 2, Y - ss / 2 + R * (0.045 + lift * 0.12), ss, ss); ctx.restore();
+      ctx.save(); ctx.globalAlpha *= lift ? 0.45 : 0.6; ctx.drawImage(sh, X - ss / 2, Y - ss / 2 + 2 + lift * R * 0.12, ss, ss); ctx.restore();
       if (info.turn && !info.down) {
         // breathe for a few seconds when the turn arrives, then hold still (no redraws while idle)
         const live = now - (this.turnSince || 0) < 8000, pulse = live ? 0.5 + 0.5 * Math.sin(now / 420) : 0.55;
-        const gs = R * 2 * 1.95 * (1 + 0.05 * pulse);
-        ctx.save(); ctx.globalAlpha *= 0.72 + 0.28 * pulse; ctx.globalCompositeOperation = 'lighter';
+        const gs = R * 2 * 1.85 * (1 + 0.05 * pulse);
+        ctx.save(); ctx.globalAlpha *= 0.6 + 0.25 * pulse; ctx.globalCompositeOperation = 'lighter';
         ctx.drawImage(bsGlowSprite(), X - gs / 2, Y - gs / 2, gs, gs); ctx.restore();
         if (live) anim = true;
       }
@@ -1817,66 +2151,74 @@ class BattleView {
       ctx.drawImage(sp, X - ar, Y - ar, ar * 2, ar * 2);
       bsBezel(ctx, X, Y, R, ring, side);
       if (hidden) { ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(X, Y, R + 3, 0, BS_TAU); ctx.setLineDash([4, 4]); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.stroke(); ctx.setLineDash([]); }
-      if (R >= 9) {
-        if (!P && info.hp) { const f = bsClamp(info.hp.hp / info.hp.max, 0, 1); if (f < 1 || sel || hov) bsHpArc(ctx, X, Y, R - ring, R, f); }
-        else if (P && info.bloodied) bsHpArc(ctx, X, Y, R - ring, R, null);
-      }
+      if (P && info.bloodied && R >= 9) bsHpArc(ctx, X, Y, R - ring, R, null);
       if (info.down) bsCross(ctx, X, Y, R * 0.45, Math.max(2, R * 0.11));
       if (sel) {
         ctx.beginPath(); ctx.arc(X, Y, R + 3, 0, BS_TAU); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
         ctx.beginPath(); ctx.arc(X, Y, R + 5.5, 0, BS_TAU); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(127,209,201,.42)'; ctx.stroke();
       } else if (hov) { ctx.beginPath(); ctx.arc(X, Y, R + 2.5, 0, BS_TAU); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.stroke(); }
-      if (info.num && R >= 9) {
-        const br = bsClamp(R * 0.26, 6.5, 11), bx = X + R * 0.72, by = Y - R * 0.72;
-        ctx.beginPath(); ctx.arc(bx, by, br, 0, BS_TAU); ctx.fillStyle = '#0f1218'; ctx.fill(); ctx.lineWidth = 1.25; ctx.strokeStyle = side; ctx.stroke();
-        ctx.font = `700 ${Math.round(br * 1.2)}px Inter, -apple-system, sans-serif`; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(info.num, bx, by + 0.5);
+      ctx.restore();
+      if (badge || bar || hidden) extras.push({ X, Y, R, info, side, badge, bar, hidden, br, bd });
+      // labels sit centred under the token (and under its HP bar), 4px clear
+      let under = R + (sel ? 7 : hov ? 4 : 1.5);
+      if (bar) under = Math.max(under, R + 4 + 4);
+      // TV: the active combatant, and (pcLabels) every PC; DM: focus, or every token big enough ('all')
+      const pcChip = P && this.pcLabels && !info.turn && !hidden && (info.kind === 'pc' || !!(t.characterId || (info.combatant && info.combatant.characterId)));
+      const want = P ? (info.turn && !hidden) || pcChip : focus || (this.labels === 'all' && R >= 18);
+      if (want && R >= 6) lbl.push({ id: t.id, text: info.name, X, Y, R: under, rim: R, top: R + 2, dot: BS_KINDS[info.kind].ring, turn: info.turn, focus: focus || pcChip, dim: info.down || hidden, small: pcChip, pri: info.turn ? 4 : e.dragging ? 3 : sel ? 2 : pcChip ? 1.5 : hov ? 1 : 0 });
+    }
+    for (const x of extras) {
+      ctx.save();
+      if (x.hidden) ctx.globalAlpha = 0.5;
+      if (x.bar) {
+        const f = bsClamp(x.info.hp.hp / x.info.hp.max, 0, 1), bw = Math.round(bsClamp(x.R * 1.3, 22, 84));
+        bsHpBar(ctx, x.X - bw / 2, x.Y + x.R + 4, bw, 4, f, dpr);
       }
-      if (hidden) {
-        const bx = X - R * 0.72, by = Y - R * 0.72, br = bsClamp(R * 0.26, 6.5, 11);
+      if (x.badge) {
+        const a = Math.PI / 6, bx = x.X + Math.cos(a) * x.bd, by = x.Y + Math.sin(a) * x.bd, br = x.br;
+        ctx.beginPath(); ctx.arc(bx, by, br + 0.5, 0, BS_TAU); ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fill();
+        ctx.beginPath(); ctx.arc(bx, by, br, 0, BS_TAU); ctx.fillStyle = '#15171d'; ctx.fill(); ctx.lineWidth = Math.max(1, br / 7); ctx.strokeStyle = bsRgba(x.side, 0.9); ctx.stroke();
+        ctx.font = `700 ${Math.round(br * (x.info.num.length > 1 ? 1.2 : 1.36) * 2) / 2}px Inter, -apple-system, "Segoe UI", sans-serif`; ctx.fillStyle = '#f3f1ec'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(x.info.num, bx, by + 0.5);
+      }
+      if (x.hidden) {
+        ctx.globalAlpha = 1;
+        const a = Math.PI * 1.25, dd = x.R + 8.5, bx = x.X + Math.cos(a) * dd, by = x.Y + Math.sin(a) * dd, br = 7;
         ctx.beginPath(); ctx.arc(bx, by, br, 0, BS_TAU); ctx.fillStyle = '#10131a'; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.stroke();
         ctx.beginPath(); ctx.moveTo(bx - br * 0.55, by + br * 0.55); ctx.lineTo(bx + br * 0.55, by - br * 0.55); ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
         ctx.beginPath(); ctx.ellipse(bx, by, br * 0.55, br * 0.32, 0, 0, BS_TAU); ctx.lineWidth = 1.2; ctx.stroke();
       }
       ctx.restore();
-      // TV: the active combatant, and (pcLabels) every PC; DM: focus, or every token big enough ('all')
-      const pcChip = P && this.pcLabels && !info.turn && !hidden && (info.kind === 'pc' || !!(t.characterId || (info.combatant && info.combatant.characterId)));
-      const want = P ? (info.turn && !hidden) || pcChip : focus || (this.labels === 'all' && R >= 18);
-      if (want && R >= 6) lbl.push({ text: info.name, X, Y, R: dR + (sel ? 5 : hov ? 2 : 0), dot: BS_KINDS[info.kind].ring, turn: info.turn, focus: focus || pcChip, dim: info.down || hidden, small: pcChip, pri: info.turn ? 4 : e.dragging ? 3 : sel ? 2 : pcChip ? 1.5 : hov ? 1 : 0 });
     }
     return anim;
   }
-  /* Name labels, placed so they never sit on a token or on each other: below, above, right, left;
-     then the same with the name cut to ~96px; then further out. A passive label ('all' mode) that
-     still does not fit is left out; a focused one always shows. */
+  /* Name labels: always centred under the token (under its HP bar when it has one), 4px clear, so a
+     name never jumps around. TV: at least 24px at 1080p, for every PC and the active combatant; DM:
+     12px, for hovered, selected, dragged and active tokens (or all, in 'all' mode). Where that spot
+     would cover the token next below, the label tucks up onto its own token's lower rim instead; one
+     that would cover a label already placed steps down a row; a passive one that still would is left
+     out. Only at the screen's bottom edge does a label go above its token. */
   drawLabels() {
     const L = this._lbl; if (!L || !L.length) return;
-    const { ctx, dpr } = this, P = this.player, big = P ? bsClamp(Math.round(this.H * 0.021), 18, 36) : 12;
-    const small = P ? bsClamp(Math.round(this.H * 14 / 1080), 12, 26) : 12; // TV PC chips: 14px at 1080p
-    const discs = this._discs || [], placed = this._placed || (this._placed = []), gapP = 3, sf = this.safe || {};
+    const { ctx, dpr } = this, P = this.player, tv = Math.max(16, Math.round(this.H * 24 / 1080));
+    const placed = this._placed || (this._placed = []), sf = this.safe || {};
     const bx0 = (sf.l || 0) + 4, by0 = (sf.t || 0) + 4, bx1 = this.W - (sf.r || 0) - 4, by1 = this.H - (sf.b || 0) - 4;
-    const hits = r => {
-      if (r.x < bx0 || r.y < by0 || r.x + r.w > bx1 || r.y + r.h > by1) return true;
-      for (const d of discs) { const cx = bsClamp(d.X, r.x, r.x + r.w), cy = bsClamp(d.Y, r.y, r.y + r.h); if ((d.X - cx) ** 2 + (d.Y - cy) ** 2 < (d.R + 1) ** 2) return true; }
-      for (const p of placed) if (r.x < p.x + p.w + gapP && p.x < r.x + r.w + gapP && r.y < p.y + p.h + gapP && p.y < r.y + r.h + gapP) return true;
-      return false;
-    };
+    const covers = r => placed.some(p => r.x < p.x + p.w + 2 && p.x < r.x + r.w + 2 && r.y < p.y + p.h + 2 && p.y < r.y + r.h + 2);
+    const discs = this._discs || [];
+    const onToken = (r, id) => discs.some(d => d.id !== id && d.R > 10 && (d.X - bsClamp(d.X, r.x, r.x + r.w)) ** 2 + (d.Y - bsClamp(d.Y, r.y, r.y + r.h)) ** 2 < (d.R - 2) ** 2);
     L.sort((a, b) => b.pri - a.pri);
     for (const l of L) {
-      const fs = l.small ? small : big;
-      const opt = { size: fs, dot: l.dot, weight: P && !l.small ? 700 : 600, border: l.turn ? 'rgba(226,165,58,.85)' : undefined, borderW: l.turn && P ? 1.5 : 1, bg: P ? 'rgba(10,12,18,.88)' : undefined, dpr };
-      const g = P ? (l.small ? 4 : 6) : 4, full = bsPillMeasure(ctx, l.text, opt), cut = bsPillMeasure(ctx, l.text, { ...opt, maxW: 96 * fs / 12 });
-      const spots = (m, far) => [
-        [l.X - m.w / 2, l.Y + l.R + g + far * (m.h + 3)], [l.X - m.w / 2, l.Y - l.R - g - m.h - far * (m.h + 3)],
-        [l.X + l.R + g + far * 8, l.Y - m.h / 2], [l.X - l.R - g - m.w - far * 8, l.Y - m.h / 2]];
-      let best = null;
-      for (const [m, far] of cut.w < full.w ? [[full, 0], [cut, 0], [cut, 1], [cut, 2]] : [[full, 0], [full, 1], [full, 2]]) {
-        for (const [x, y] of spots(m, far)) { const r = { x, y, w: m.w, h: m.h }; if (!hits(r)) { best = { r, m }; break; } }
-        if (best) break;
-      }
-      if (!best) { if (!l.focus) continue; const [x, y] = spots(cut, 0)[0]; best = { r: { x: bsClamp(x, bx0, bx1 - cut.w), y: bsClamp(y, by0, by1 - cut.h), w: cut.w, h: cut.h }, m: cut }; }
-      placed.push(best.r);
+      const fs = P ? (l.turn ? Math.round(tv * 1.08) : tv) : 12;
+      const opt = { size: fs, dot: l.dot, weight: P && l.turn ? 700 : 600, border: l.turn ? 'rgba(224,166,58,.9)' : undefined, borderW: l.turn && P ? 2 : 1, bg: P ? 'rgba(10,12,18,.9)' : 'rgba(14,16,22,.88)', dpr };
+      const m = bsPillMeasure(ctx, l.text, { ...opt, maxW: P ? fs * 10 : 168 });
+      const r = { x: bsClamp(l.X - m.w / 2, bx0, Math.max(bx0, bx1 - m.w)), y: l.Y + l.R + 4, w: m.w, h: m.h };
+      if (onToken(r, l.id)) r.y = Math.min(r.y, l.Y + l.rim - m.h * 0.62);
+      if (r.y + r.h > by1) r.y = l.Y - l.top - 4 - m.h;
+      for (let n = 0; n < 2 && covers(r); n++) r.y += m.h + 2;
+      if (covers(r) && !l.focus) continue;
+      placed.push(r);
       ctx.save(); if (l.dim) ctx.globalAlpha = 0.65;
-      bsPillDraw(ctx, best.m, best.r.x, best.r.y, opt);
+      bsPillDraw(ctx, m, r.x, r.y, opt);
       ctx.restore();
     }
   }
@@ -1930,7 +2272,7 @@ class BattleView {
       }
       ox.putImageData(img, 0, 0);
     } else ox.drawImage(R.c, 0, 0); // no pixel access: a hard-edged mask still works
-    this._fog = { sig, canvas: out, k };
+    this._fog = { sig, canvas: out, k, cov: R.a, cw, ch }; // cov: the feathered coverage, for fogAt()
     return this._fog;
   }
   /* The DM's fog: the exact edge as vector loops (marching squares over a crisp raster, simplified),
@@ -1951,20 +2293,32 @@ class BattleView {
     if (!sc.fog || !sc.fog.on) return;
     const { ctx, dpr, cam } = this;
     if (!this.player) {
+      /* 55% black over what the players cannot see; what they can see stays at full brightness. Both
+         the shade and its edge are clipped to the map and, on a dungeon, to its floor: the rock is dark
+         either way, so a reveal that runs into it leaves no sheet or stray line there. The edge is a
+         quiet dark-and-amber hairline, never white. */
       if (!this.gmFog) return;
-      const f = this.fogLoops(sc, w, h);
-      ctx.save(); ctx.setTransform(dpr * cam.z, 0, 0, dpr * cam.z, dpr * cam.x, dpr * cam.y);
-      ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip();
+      const f = this.fogLoops(sc, w, h), clipTo = () => { ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip(); if (this._floorClip) ctx.clip(this._floorClip); };
+      ctx.save(); ctx.setTransform(dpr * cam.z, 0, 0, dpr * cam.z, dpr * cam.x, dpr * cam.y); clipTo();
       if (f.fill) { ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fill(f.fill, 'evenodd'); }
       else { const s = dpr * cam.z / f.k; ctx.setTransform(s, 0, 0, s, dpr * cam.x, dpr * cam.y); ctx.globalAlpha = 0.55; ctx.drawImage(f.raster, 0, 0); }
       ctx.restore();
+      // the walls' rock-side half (and the jambs and leaves standing proud of it) under the same shade
+      const plan = this._floorSrc && this._floorSrc.plan;
+      if (plan && f.fill && this._floorClip) {
+        ctx.save(); ctx.setTransform(dpr * cam.z, 0, 0, dpr * cam.z, dpr * cam.x, dpr * cam.y);
+        ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip(); ctx.clip(f.fill, 'evenodd'); ctx.clip(plan.rock, 'evenodd');
+        ctx.lineCap = 'square'; ctx.lineWidth = plan.wallT * 1.8 + 2.4 / cam.z; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.stroke(plan.walls);
+        ctx.restore();
+      }
       if (f.loops.length) {
         const zz = dpr * cam.z, tx = dpr * cam.x, ty = dpr * cam.y, lw = Math.max(1, Math.round(dpr)), off = (lw % 2) / 2;
-        ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.beginPath(); ctx.rect(tx, ty, w * zz, h * zz); ctx.clip();
+        ctx.save(); ctx.setTransform(zz, 0, 0, zz, tx, ty); clipTo(); ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.beginPath();
         for (const l of f.loops) { l.forEach((p, i) => { const X = Math.round(p[0] * zz + tx) + off, Y = Math.round(p[1] * zz + ty) + off; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }); ctx.closePath(); }
-        ctx.lineWidth = lw; ctx.lineJoin = 'miter'; ctx.strokeStyle = 'rgba(232,236,244,.62)'; ctx.stroke();
+        ctx.lineJoin = 'miter';
+        ctx.lineWidth = lw * 3; ctx.strokeStyle = 'rgba(0,0,0,.28)'; ctx.stroke();
+        ctx.lineWidth = lw; ctx.strokeStyle = 'rgba(224,166,58,.5)'; ctx.stroke();
         ctx.restore();
       }
       return;
@@ -1987,7 +2341,8 @@ class BattleView {
       if (!fd.closed) fd.pts.forEach((p, i) => { const [X, Y] = this.toScreen(p[0], p[1]); ctx.beginPath(); ctx.arc(X, Y, i === 0 ? 6 : 3.5, 0, BS_TAU); ctx.fillStyle = i === 0 ? col : '#fff'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.stroke(); });
       ctx.restore();
     }
-    if (L.marquee) { const m = L.marquee; const [X0, Y0] = this.toScreen(m.x, m.y); ctx.save(); ctx.fillStyle = 'rgba(127,209,201,.08)'; ctx.strokeStyle = 'rgba(127,209,201,.85)'; ctx.lineWidth = 1; ctx.fillRect(X0, Y0, m.w * this.cam.z, m.h * this.cam.z); ctx.strokeRect(Math.round(X0) + 0.5, Math.round(Y0) + 0.5, Math.round(m.w * this.cam.z), Math.round(m.h * this.cam.z)); ctx.restore(); }
+    // a selection marquee (only while dragging): a 1px dashed accent line and a 6% fill
+    if (L.marquee) { const m = L.marquee; const [X0, Y0] = this.toScreen(m.x, m.y); ctx.save(); ctx.fillStyle = 'rgba(127,209,201,.06)'; ctx.strokeStyle = 'rgba(127,209,201,.9)'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.fillRect(X0, Y0, m.w * this.cam.z, m.h * this.cam.z); ctx.strokeRect(Math.round(X0) + 0.5, Math.round(Y0) + 0.5, Math.round(m.w * this.cam.z), Math.round(m.h * this.cam.z)); ctx.restore(); }
     if (L.calib) {
       const c = L.calib, [X0, Y0] = this.toScreen(Math.min(c.a[0], c.b[0]), Math.min(c.a[1], c.b[1])), sz = Math.max(Math.abs(c.b[0] - c.a[0]), Math.abs(c.b[1] - c.a[1])) * this.cam.z;
       ctx.save(); ctx.fillStyle = 'rgba(242,193,94,.14)'; ctx.fillRect(X0, Y0, sz, sz); ctx.lineWidth = 2; ctx.strokeStyle = '#f2c15e'; ctx.strokeRect(X0, Y0, sz, sz);
