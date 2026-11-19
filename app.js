@@ -1782,7 +1782,7 @@ async function renderDM(c) {
           <select id="enc-monster"><option value="">+ Monster (SRD)…</option>${(typeof BESTIARY !== 'undefined' ? BESTIARY : []).map(b => `<option value="${b.id}">${esc(b.name)} — CR ${esc(b.cr)}, AC ${b.ac}, HP ${b.hp}</option>`).join('')}</select>
           <input id="enc-monster-n" type="number" min="1" max="12" value="1" style="width:64px" title="how many">
           <button class="btn small dm" id="enc-monster-add">Add</button>
-          <span class="muted" style="font-size:12px">rolls initiative, fills AC/HP/attacks · run the fight from the Battle tab</span>
+          <span class="muted" style="font-size:12px">rolls initiative, fills AC/HP/attacks · run the fight from Initiative</span>
         </div>
       </div>
     </details>

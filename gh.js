@@ -263,8 +263,8 @@ const isAdmin = u => !!u && u.role === 'admin';
 const isDMUser = isStaff;
 // Tabs a role can open (the login server has the same list and enforces it for players).
 const TAB_DEFS = [
-  { id: 'map', label: 'Map', player: true }, { id: 'chat', label: 'DM Chat' }, { id: 'party', label: 'Party', player: true },
-  { id: 'battle', label: 'Battle', player: true }, { id: 'battlemap', label: 'Battle map', player: true }, { id: 'dice', label: 'Dice', player: true },
+  { id: 'map', label: 'World map', player: true }, { id: 'chat', label: 'DM Chat' }, { id: 'party', label: 'Party', player: true },
+  { id: 'battle', label: 'Initiative', player: true }, { id: 'battlemap', label: 'Battle map', player: true }, { id: 'dice', label: 'Dice', player: true },
   { id: 'journal', label: 'Journal', player: true }, { id: 'codex', label: 'Codex', player: true }, { id: 'quests', label: 'Quests', player: true },
   { id: 'board', label: 'Board', player: true }, { id: 'arc', label: 'Arc' }, { id: 'notes', label: 'My Notes', player: true }, { id: 'dm', label: 'Prep & tools' }
 ];
@@ -277,7 +277,7 @@ function noticeView(n, user) { return isDMUser(user) || !n.dmOnly ? { ...n } : n
 function arcView(e, user) { return isDMUser(user) ? { ...e } : null; }
 function encounterView(enc, user) {
   if (isDMUser(user)) return enc;
-  return { round: enc.round || 1, turn: enc.turn || 0, combatants: (enc.combatants || []).map(x => ({ name: x.name, init: x.init, characterId: x.characterId || null, down: (Number(x.maxHp) > 0 && Number(x.hp) <= 0) || undefined })) };
+  return { round: enc.round || 1, turn: enc.turn || 0, combatants: (enc.combatants || []).map(x => ({ id: x.id, name: x.name, init: x.init, tie: x.tie, characterId: x.characterId || null, down: (Number(x.maxHp) > 0 && Number(x.hp) <= 0) || undefined })) };
 }
 
 /* Battle map tokens link to combatants by id. The Battle and DM tabs save the whole encounter from
