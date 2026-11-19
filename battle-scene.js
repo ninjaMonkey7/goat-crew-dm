@@ -2130,8 +2130,9 @@ class BattleView {
       const side = info.down ? '#7b818c' : BS_KINDS[info.kind].ring, ring = R >= 12 ? bsClamp(R * 0.06, 3, 4) : bsClamp(R * 0.22, 1.5, 3);
       const sel = !P && this.sel.has(t.id), hov = !P && this.hover === t.id, focus = sel || hov || e.dragging || info.turn;
       const badge = info.num && R >= 9, bar = !P && info.hp && R >= 9 && (info.kind === 'foe' || sel || hov);
-      // number badge: 14px on the DM's map, TV-sized on the TV, at 4 o'clock just clear of the ring
-      const br = P ? bsClamp(Math.round(this.H * 11 / 1080), 7, 16) : 7, bd = R + br + 1.5;
+      // number badge: 14px on the DM's map (a little larger on a big token up close), TV-sized on the TV,
+      // at 4 o'clock just clear of the ring
+      const br = P ? bsClamp(Math.round(this.H * 11 / 1080), 7, 16) : bsClamp(Math.round(R * 0.13 * 2) / 2, 7, 10), bd = R + br + 1.5;
       discs.push({ X, Y, R: R + 1.5, id: t.id });
       if (badge) discs.push({ X: X + Math.cos(Math.PI / 6) * bd, Y: Y + Math.sin(Math.PI / 6) * bd, R: br, id: t.id });
       ctx.save();
@@ -2214,6 +2215,12 @@ class BattleView {
       const r = { x: bsClamp(l.X - m.w / 2, bx0, Math.max(bx0, bx1 - m.w)), y: l.Y + l.R + 4, w: m.w, h: m.h };
       if (onToken(r, l.id)) r.y = Math.min(r.y, l.Y + l.rim - m.h * 0.62);
       if (r.y + r.h > by1) r.y = l.Y - l.top - 4 - m.h;
+      if (covers(r)) {
+        // slide sideways (up to ~half its width) clear of the label in the way, before stepping down a row
+        const hit = placed.filter(p => r.x < p.x + p.w + 2 && p.x < r.x + r.w + 2 && r.y < p.y + p.h + 2 && p.y < r.y + r.h + 2);
+        const opts = hit.flatMap(p => [p.x + p.w + 3 - r.x, p.x - 3 - (r.x + r.w)]).filter(d => Math.abs(d) <= m.w * 0.55).sort((a, b) => Math.abs(a) - Math.abs(b));
+        for (const d of opts) { const t = { ...r, x: r.x + d }; if (t.x >= bx0 && t.x + t.w <= bx1 && !covers(t)) { r.x = t.x; break; } }
+      }
       for (let n = 0; n < 2 && covers(r); n++) r.y += m.h + 2;
       if (covers(r) && !l.focus) continue;
       placed.push(r);
