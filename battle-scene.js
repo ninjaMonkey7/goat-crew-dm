@@ -953,8 +953,9 @@ class BattleView {
     const lw = Math.max(1, Math.round(dpr)), off = (lw % 2) / 2, al = v => (Math.round(v * dpr) + off) / dpr;
     const [, ty0] = this.toScreen(0, y0), [, ty1] = this.toScreen(0, y1), [tx0] = this.toScreen(x0, 0), [tx1] = this.toScreen(x1, 0);
     ctx.beginPath();
-    for (let k = Math.ceil((x0 - g.offsetX) / g.size); g.offsetX + k * g.size <= x1; k++) { const X = al(this.toScreen(g.offsetX + k * g.size, 0)[0]); ctx.moveTo(X, ty0); ctx.lineTo(X, ty1); }
-    for (let k = Math.ceil((y0 - g.offsetY) / g.size); g.offsetY + k * g.size <= y1; k++) { const Y = al(this.toScreen(0, g.offsetY + k * g.size)[1]); ctx.moveTo(tx0, Y); ctx.lineTo(tx1, Y); }
+    // interior lines only: a line on the map's outer edge sits half outside the fog and shows on the TV
+    for (let k = Math.ceil((x0 - g.offsetX) / g.size); g.offsetX + k * g.size <= x1; k++) { const gx = g.offsetX + k * g.size; if (gx <= 0 || gx >= w) continue; const X = al(this.toScreen(gx, 0)[0]); ctx.moveTo(X, ty0); ctx.lineTo(X, ty1); }
+    for (let k = Math.ceil((y0 - g.offsetY) / g.size); g.offsetY + k * g.size <= y1; k++) { const gy = g.offsetY + k * g.size; if (gy <= 0 || gy >= h) continue; const Y = al(this.toScreen(0, gy)[1]); ctx.moveTo(tx0, Y); ctx.lineTo(tx1, Y); }
     const op = bsClamp(g.opacity, 0, 1);
     ctx.lineWidth = lw / dpr;
     ctx.strokeStyle = this._lightFloor ? `rgba(58,38,18,${(0.1 + op * 0.3) * fade})` : `rgba(255,255,255,${(0.04 + op * 0.2) * fade})`;
