@@ -266,7 +266,7 @@ const TAB_DEFS = [
   { id: 'map', label: 'Map', player: true }, { id: 'chat', label: 'DM Chat' }, { id: 'party', label: 'Party', player: true },
   { id: 'battle', label: 'Battle', player: true }, { id: 'battlemap', label: 'Battle map', player: true }, { id: 'dice', label: 'Dice', player: true },
   { id: 'journal', label: 'Journal', player: true }, { id: 'codex', label: 'Codex', player: true }, { id: 'quests', label: 'Quests', player: true },
-  { id: 'board', label: 'Board', player: true }, { id: 'arc', label: 'Arc' }, { id: 'notes', label: 'My Notes', player: true }, { id: 'dm', label: 'DM' }
+  { id: 'board', label: 'Board', player: true }, { id: 'arc', label: 'Arc' }, { id: 'notes', label: 'My Notes', player: true }, { id: 'dm', label: 'Prep & tools' }
 ];
 function defaultTabs(role) { const t = TAB_DEFS.filter(x => role !== 'player' || x.player).map(x => x.id); return role === 'admin' ? [...t, 'admin'] : t; }
 function charView(c, user) { const out = { ...c }; if (!isDMUser(user) && user.characterId !== c.id) delete out.dmNotes; out.editable = isDMUser(user) || user.characterId === c.id; return out; }

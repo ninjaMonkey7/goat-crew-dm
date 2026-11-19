@@ -121,8 +121,8 @@ html[data-theme="light"] .bm {
 .bm-apptab .ic { width: 20px; height: 20px; stroke-width: 1.75; color: var(--ink-2); }
 .bm-apptab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bm-apptab:hover, .bm-apptab:focus-visible { background: var(--hover); outline: none; box-shadow: inset 0 0 0 1px var(--glass-line); }
-.bm-apptab.dm .ic { color: #b393ec; }
-html[data-theme="light"] .bm-apptab.dm .ic { color: #7444c9; }
+.bm-apptab.dm .ic { color: var(--muted); }
+html[data-theme="light"] .bm-apptab.dm .ic { color: var(--muted); }
 .bm-apptab.on { background: var(--amber); color: var(--on-amber); }
 .bm-apptab.on .ic { color: var(--on-amber); }
 .bm-pins { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -446,4 +446,4 @@ html[data-theme="light"] .bm-cast.live .bm-cast-state { color: #1f6b43; backgrou
 }
 
 /* players see the TV view inside their Battle map tab */
-.bm-player-frame { display: block; width: 100%; height: calc(100vh - 106px); border: 0; background: #07080b; }
+.bm-player-frame { display: block; width: 100%; height: calc(100vh - var(--top-h, 52px)); border: 0; background: #07080b; }
