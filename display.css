@@ -27,7 +27,7 @@ body.idle, body.idle * { cursor: none !important; }
 /* the round: a gold medallion with a label you can read from the sofa */
 .dp-round { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(3 * var(--px)); width: calc(84 * var(--px)); height: calc(84 * var(--px)); flex-shrink: 0; border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, rgba(242, 181, 68, .3), rgba(242, 181, 68, .07) 70%); box-shadow: inset 0 0 0 calc(2 * var(--px)) rgba(242, 181, 68, .7), 0 0 calc(18 * var(--px)) rgba(242, 181, 68, .18); }
-.dp-round span { font-size: calc(15 * var(--px)); font-weight: 700; letter-spacing: .1em; line-height: 1; text-transform: uppercase; color: var(--gold-hi); margin-left: .1em; }
+.dp-round span { font-size: max(11px, calc(15 * var(--px))); font-weight: 700; letter-spacing: .04em; line-height: 1; text-transform: uppercase; color: var(--gold-hi); margin-left: .04em; }
 .dp-round b { font: 700 calc(38 * var(--px))/1 var(--sans); font-variant-numeric: tabular-nums lining-nums; letter-spacing: -.02em; color: #fff; }
 /* now acting: the biggest thing on the TV after the map */
 .dp-now { display: flex; align-items: center; gap: calc(16 * var(--px)); min-width: 0; }
@@ -35,20 +35,22 @@ body.idle, body.idle * { cursor: none !important; }
 @keyframes dp-now { from { opacity: 0; translate: 18px 0; } }
 .dp-now canvas { flex-shrink: 0; width: calc(72 * var(--px)) !important; height: calc(72 * var(--px)) !important; border-radius: 50%; filter: brightness(1.12) drop-shadow(0 0 calc(16 * var(--px)) rgba(242, 181, 68, .55)); }
 .dp-now-text { display: flex; flex-direction: column; gap: calc(2 * var(--px)); min-width: 0; }
-.dp-now-text span { font-size: calc(16 * var(--px)); font-weight: 700; letter-spacing: .14em; line-height: 1.1; text-transform: uppercase; color: var(--gold-hi); }
+.dp-now-text span { font-size: max(11px, calc(16 * var(--px))); font-weight: 700; letter-spacing: .04em; line-height: 1.1; text-transform: uppercase; color: var(--gold-hi); }
 .dp-now-text b { font: 700 calc(46 * var(--px))/1 var(--serif); font-variant-numeric: lining-nums; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: calc(440 * var(--px)); text-shadow: 0 2px 12px rgba(0, 0, 0, .5); }
 .dp-dim { color: rgba(255, 255, 255, .45) !important; }
 /* up next: 28 px names on 48 px discs, never fainter than 76% */
 .dp-next { display: flex; flex-direction: column; gap: calc(6 * var(--px)); padding-left: calc(22 * var(--px)); border-left: 1px solid rgba(255, 255, 255, .16); min-width: 0; }
-.dp-next > span { font-size: calc(15 * var(--px)); font-weight: 700; letter-spacing: .14em; line-height: 1.1; text-transform: uppercase; color: rgba(255, 255, 255, .82); }
+.dp-next > span { font-size: max(11px, calc(15 * var(--px))); font-weight: 700; letter-spacing: .04em; line-height: 1.1; text-transform: uppercase; color: rgba(255, 255, 255, .82); }
 .dp-next-row { display: flex; gap: calc(22 * var(--px)); min-width: 0; }
 .dp-up { display: flex; align-items: center; gap: calc(10 * var(--px)); opacity: calc(1 - var(--i) * .08); min-width: 0; }
 .dp-up canvas { flex-shrink: 0; width: calc(48 * var(--px)) !important; height: calc(48 * var(--px)) !important; }
-.dp-up b { font-size: calc(28 * var(--px)); font-weight: 600; line-height: 1.1; letter-spacing: -.005em; color: #fff; white-space: nowrap; max-width: calc(230 * var(--px)); overflow: hidden; text-overflow: ellipsis; }
+.dp-up b { font-size: max(12px, calc(28 * var(--px))); font-weight: 600; line-height: 1.1; letter-spacing: -.005em; color: #fff; white-space: nowrap; max-width: calc(230 * var(--px)); overflow: hidden; text-overflow: ellipsis; }
 .dp-up b i { font-style: normal; font-weight: 500; color: rgba(255, 255, 255, .78); }
+.dp-up.unseen canvas { opacity: .9; }
 .dp-up.down b { color: rgba(255, 255, 255, .72); text-decoration: line-through; text-decoration-color: rgba(242, 109, 109, .8); text-decoration-thickness: calc(2 * var(--px)); }
 
-/* scene title card: a few seconds on each new scene, then gone */
+/* scene title card: three seconds on each new scene, then it fades (display.js); the serif is only ever
+   this title and the active combatant's name */
 .dp-title { position: absolute; left: 0; right: 0; margin: 0 auto; width: fit-content; bottom: 9vh; z-index: 3; display: flex; align-items: center; gap: 22px; pointer-events: none; opacity: 0; transition: opacity .9s ease, translate .9s ease; white-space: nowrap; }
 .dp-title.show { opacity: 1; translate: 0 -6px; transition-duration: .6s; }
 .dp-title b { font: 700 clamp(36px, 5vw, 76px)/1 var(--serif); font-variant-numeric: lining-nums; font-feature-settings: "lnum" 1, "pnum" 1; color: #fff6e0; letter-spacing: .02em; text-shadow: 0 4px 30px rgba(0, 0, 0, .8), 0 0 2px rgba(0, 0, 0, .6); }
@@ -59,7 +61,7 @@ body.idle, body.idle * { cursor: none !important; }
 .dp-msg { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; padding: 6vh 6vw;
   background: radial-gradient(ellipse 60% 50% at 50% 42%, rgba(242, 181, 68, .09), transparent 70%), var(--fog); }
 .dp-wait { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; max-width: 820px; animation: dp-fade 1s ease; }
-.dp-wait b { font: 700 clamp(34px, 4.4vw, 64px)/1.05 var(--serif); color: #fff6e0; }
+.dp-wait b { font: 600 clamp(28px, 3.2vw, 48px)/1.15 var(--sans); letter-spacing: -.015em; color: #fff6e0; }
 .dp-wait span { font-size: clamp(16px, 1.5vw, 22px); line-height: 1.55; color: rgba(255, 255, 255, .66); }
 .dp-wait em { font-style: normal; color: var(--gold); }
 .dp-sigil { width: 84px; height: 84px; border-radius: 50%; margin-bottom: 8px; box-shadow: inset 0 0 0 1.5px rgba(242, 181, 68, .55), 0 0 60px rgba(242, 181, 68, .25);

@@ -53,10 +53,11 @@ function dpTitle(name) {
 
 /* ---------- camera ----------
    The frame is the screen below the initiative ribbon. What goes in it depends on the DM's choice
-   (display.follow): 'fit' the revealed area, 'turn' = follow the active token, 'dm' = the DM's own view
-   (cropped to what is revealed), 'locked' = a view the DM pinned. Whatever the target, it is centred
-   with 48 px of breathing room (at 1080p) and the camera eases there over ~400 ms. Under fog the space
-   beyond the map is the same darkness as the fog, so the camera never pins the map to a screen edge. */
+   (display.follow): 'fit' = the action (the party and every creature the players can see, inside what
+   is revealed), 'turn' = follow the active token, 'dm' = the DM's own view (cropped to what is
+   revealed), 'locked' = a view the DM pinned. Whatever the target, it is centred with 48 px of breathing
+   room (at 1080p), the rest of the frame is filled from what is revealed around it rather than from the
+   dark, and the camera eases there over 400 ms. */
 const DP_PAD = 48, DP_EASE_MS = 400, DP_MIN_ROWS = 8, DP_FOLLOW_ROWS = 10;
 const dpEaseInOut = k => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
 const dpEaseOut = k => 1 - Math.pow(1 - k, 3);
@@ -77,6 +78,22 @@ function dpVisibleAt(sc, x, y) {
   for (const r of sc.fog.reveals) if (r.pts && r.pts.length >= 3 && bsPointInPoly(x, y, r.pts)) vis = !r.hide;
   return vis;
 }
+/* The action: the party, and every combatant the players can see, a little room around each, cut to
+   what is revealed. Null when nobody is there to frame (then the camera fits everything revealed). */
+function dpActionRect(sc, fit) {
+  const g = bsGrid(sc).size, toks = sc.tokens.filter(t => !t.hidden && Number.isFinite(t.x) && Number.isFinite(t.y));
+  const party = t => t.kind === 'pc' || t.kind === 'ally' || !!t.characterId;
+  let pick = toks.filter(t => party(t) || (t.combatantId && dpVisibleAt(sc, t.x, t.y)));
+  if (!pick.length) pick = toks.filter(t => dpVisibleAt(sc, t.x, t.y));
+  if (!pick.length) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const t of pick) {
+    const r = Math.max(0.5, Number(t.size) || 1) * g / 2 + g * 0.75; // room for the name under a PC
+    x0 = Math.min(x0, t.x - r); y0 = Math.min(y0, t.y - r); x1 = Math.max(x1, t.x + r); y1 = Math.max(y1, t.y + r);
+  }
+  x0 = Math.max(x0, fit.x); y0 = Math.max(y0, fit.y); x1 = Math.min(x1, fit.x + fit.w); y1 = Math.min(y1, fit.y + fit.h);
+  return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+}
 // where the ribbon really ends (its layout box, so the drop-in animation does not move the frame)
 function dpRibbonBottom() { const el = dp$('dp-init'); return el.classList.contains('hidden') ? 0 : el.offsetTop + el.offsetHeight; }
 function dpPadFor(top) { const p = Math.round(DP_PAD * bsClamp(DP.k, 0.7, 1.6)); return { t: top + p, r: p, b: p, l: p }; }
@@ -93,7 +110,7 @@ function dpTargetRect(sc, pad) {
     return out(x1 - x0 > g && y1 - y0 > g ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : fit);
   }
   if (d.follow === 'turn') { const r = dpFollowRect(sc, fit, pad); if (r) return out(r); }
-  return out(fit);
+  return out(dpActionRect(sc, fit) || fit);
 }
 const dpAxis = (c, span, lo, len) => (len <= span ? lo + len / 2 - span / 2 : bsClamp(c - span / 2, lo, lo + len - span));
 /* Follow the active token: a frame about ten squares tall around whoever is acting, held still while
@@ -118,10 +135,14 @@ function dpCamFor(sc, r, pad, top) {
   const v = DP.view, g = bsGrid(sc).size, fw = Math.max(40, v.W - pad.l - pad.r), fh = Math.max(40, v.H - pad.t - pad.b);
   // never closer than ~8 squares tall (one small room would fill the TV with three tokens): a smaller
   // target grows to that, staying inside what is revealed rather than showing darkness past its edge
-  const minH = DP_MIN_ROWS * g, minW = minH * fw / fh;
-  if (r.w < minW && r.h < minH) {
-    const B = r.bounds || r;
-    r = { x: dpAxis(r.x + r.w / 2, minW, B.x, B.w), y: dpAxis(r.y + r.h / 2, minH, B.y, B.h), w: minW, h: minH };
+  const minH = DP_MIN_ROWS * g, minW = minH * fw / fh, B = r.bounds || r;
+  if (r.w < minW && r.h < minH) r = { ...r, x: dpAxis(r.x + r.w / 2, minW, B.x, B.w), y: dpAxis(r.y + r.h / 2, minH, B.y, B.h), w: minW, h: minH };
+  // the frame's shape is wider (or taller) than the target: fill the rest from what is revealed around
+  // it, sliding toward the revealed side rather than centring on darkness (the target stays in frame)
+  if (!r.noPad) {
+    const ar = fw / fh;
+    if (r.w / r.h < ar) { const w2 = r.h * ar; r = { ...r, x: dpAxis(r.x + r.w / 2, w2, B.x, B.w), w: w2 }; }
+    else { const h2 = r.w / ar; r = { ...r, y: dpAxis(r.y + r.h / 2, h2, B.y, B.h), h: h2 }; }
   }
   const c = v.camFor(r, pad);
   if (sc.fog && sc.fog.on) return c;
@@ -162,35 +183,69 @@ function dpFrame(t) {
   return true;
 }
 
-// ---------- initiative ribbon (player-safe: no HP, hidden tokens' combatants left out) ----------
+/* ---------- turn order ----------
+   Indices into enc.combatants, highest initiative first: the same queue as the DM's tracker (gh.js
+   encounterOrder carries its tie-breaks). The array itself may be unsorted, so never read it in order. */
+function dpOrder(enc) {
+  const list = (enc && enc.combatants) || [];
+  if (typeof encounterOrder === 'function') {
+    try { const o = encounterOrder(enc); if (Array.isArray(o) && o.length === list.length) return o; } catch (e) { console.warn('encounterOrder', e); }
+  }
+  const init = c => Number(c && c.init) || 0;
+  return list.map((_, i) => i).sort((a, b) => init(list[b]) - init(list[a]) || a - b);
+}
+
+/* ---------- initiative ribbon (player-safe) ----------
+   No HP. A combatant whose token the DM hid is left out entirely. A creature the players cannot see
+   (its token stands in fog, or is not on this map) still takes its place in the queue, as a "?": the
+   table knows something else acts, not what or where. The party is always named. */
+function dpRibbonEntry(c, sc) {
+  const tok = c.id ? sc.tokens.find(t => t.combatantId === c.id) : null;
+  if (tok && tok.hidden) return null;
+  const party = (tok && (tok.kind === 'pc' || tok.kind === 'ally')) || (!tok && bsKindOf(c) === 'pc');
+  const seen = party || (tok ? dpVisibleAt(sc, tok.x, tok.y) : !c.monster);
+  if (!seen) return { c, unseen: true };
+  // the disc matches the token on the map: its side, its art (portrait or creature glyph), its name
+  const i = bsCombatantInfo(c, RAW.characters || [], null);
+  if (tok) { i.kind = BS_KINDS[tok.kind] ? tok.kind : i.kind; if (tok.img) i.img = tok.img; if (tok.emoji) i.emoji = tok.emoji; if (tok.name) { i.name = tok.name; i.base = bsBaseName(tok.name); i.num = bsNumber(tok.name); } }
+  return { c, info: i };
+}
+// the "?" disc for a creature the players cannot see
+function dpUnseenDisc(cv, css) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5), px = Math.round(css * dpr), x = cv.getContext('2d'), R = px / 2;
+  cv.width = px; cv.height = px; cv.style.width = css + 'px'; cv.style.height = css + 'px';
+  x.clearRect(0, 0, px, px);
+  x.beginPath(); x.arc(R, R, R - 1, 0, BS_TAU); x.fillStyle = '#1b1c22'; x.fill();
+  x.lineWidth = Math.max(1.5, px * 0.05); x.strokeStyle = 'rgba(255,255,255,.28)'; x.setLineDash([px * 0.09, px * 0.07]); x.beginPath(); x.arc(R, R, R - x.lineWidth, 0, BS_TAU); x.stroke(); x.setLineDash([]);
+  x.fillStyle = 'rgba(255,255,255,.78)'; x.font = `700 ${Math.round(px * 0.5)}px Inter, -apple-system, sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText('?', R, R + px * 0.03);
+  return cv;
+}
 function dpRenderInit() {
   const el = dp$('dp-init'), enc = DP.enc, sc = DP.view && DP.view.scene, d = DP.battle && DP.battle.display;
   const list = (enc && enc.combatants) || [];
   if (!sc || !d || d.showInit === false || !list.length) { if (!el.classList.contains('hidden')) { el.classList.add('hidden'); DP.view && DP.view.request(); } el.dataset.sig = ''; return; }
-  const hidden = new Set(sc.tokens.filter(t => t.hidden && t.combatantId).map(t => t.combatantId));
-  const visible = c => !(c.id && hidden.has(c.id));
-  const turn = Math.min(enc.turn || 0, list.length - 1), cur = list[turn];
-  const now = cur && visible(cur) ? cur : null, next = [];
-  for (let i = 1; i < list.length && next.length < 4; i++) { const c = list[(turn + i) % list.length]; if (visible(c)) next.push(c); }
-  // the disc matches the token on the map: its side, its art (portrait or creature glyph), its name
-  const info = c => {
-    const i = bsCombatantInfo(c, RAW.characters || [], null), tok = sc.tokens.find(t => t.combatantId && t.combatantId === c.id);
-    if (tok) { i.kind = BS_KINDS[tok.kind] ? tok.kind : i.kind; if (tok.img) i.img = tok.img; if (tok.emoji) i.emoji = tok.emoji; if (tok.name) { i.name = tok.name; i.base = bsBaseName(tok.name); i.num = bsNumber(tok.name); } }
-    return i;
-  };
-  const sig = JSON.stringify([enc.round, turn, now && [now.id, now.name, now.hp > 0], next.map(c => [c.id, c.name, Number(c.maxHp) > 0 && Number(c.hp) <= 0]), DP.k]);
+  const order = dpOrder(enc), raw = Math.max(0, Math.min(Number(enc.turn) || 0, list.length - 1)), pos = Math.max(0, order.indexOf(raw));
+  const now = dpRibbonEntry(list[raw], sc), next = [];
+  for (let i = 1; i < order.length && next.length < 4; i++) { const e = dpRibbonEntry(list[order[(pos + i) % order.length]], sc); if (e) next.push(e); }
+  const key = e => (e.unseen ? ['?'] : [e.c.id, e.info.name, e.info.img, e.info.kind, !!e.info.down]);
+  const sig = JSON.stringify([enc.round, raw, now && key(now), next.map(key), DP.k]);
   if (el.dataset.sig === sig && !el.classList.contains('hidden')) return;
-  const turnChanged = el.dataset.turn !== `${enc.round}:${turn}`;
-  el.dataset.sig = sig; el.dataset.turn = `${enc.round}:${turn}`;
-  const nowInfo = now ? info(now) : null;
+  const turnChanged = el.dataset.turn !== `${enc.round}:${raw}`;
+  el.dataset.sig = sig; el.dataset.turn = `${enc.round}:${raw}`;
+  const nowInfo = now && !now.unseen ? now.info : null;
   el.innerHTML = `<div class="dp-round" aria-label="Round ${enc.round || 1}"><span>Round</span><b>${enc.round || 1}</b></div>
-    <div class="dp-now ${turnChanged ? 'enter' : ''}">${now ? `<canvas id="dp-now-disc"></canvas><div class="dp-now-text"><span>${nowInfo.down ? 'Down' : 'Now acting'}</span><b>${dpEsc(nowInfo.name)}</b></div>` : `<div class="dp-now-text"><span>Now acting</span><b class="dp-dim">…</b></div>`}</div>
-    ${next.length ? `<div class="dp-next"><span>Up next</span><div class="dp-next-row">${next.map((c, i) => { const n = info(c); return `<div class="dp-up ${n.down ? 'down' : ''}" style="--i:${i}"><canvas data-n="${i}"></canvas><b>${dpEsc(n.base || n.name)}${n.num ? ` <i>${n.num}</i>` : ''}</b></div>`; }).join('')}</div></div>` : ''}`;
+    <div class="dp-now ${turnChanged ? 'enter' : ''}">${nowInfo ? `<canvas id="dp-now-disc"></canvas><div class="dp-now-text"><span>${nowInfo.down ? 'Down' : 'Now acting'}</span><b>${dpEsc(nowInfo.name)}</b></div>`
+      : now ? `<canvas id="dp-now-disc"></canvas><div class="dp-now-text"><span>Now acting</span><b class="dp-dim">Unseen</b></div>` : `<div class="dp-now-text"><span>Now acting</span><b class="dp-dim">…</b></div>`}</div>
+    ${next.length ? `<div class="dp-next"><span>Up next</span><div class="dp-next-row">${next.map((e, i) => e.unseen
+      ? `<div class="dp-up unseen" style="--i:${i}" aria-label="Someone unseen"><canvas data-n="${i}"></canvas></div>`
+      : `<div class="dp-up ${e.info.down ? 'down' : ''}" style="--i:${i}"><canvas data-n="${i}"></canvas><b>${dpEsc(e.info.base || e.info.name)}${e.info.num ? ` <i>${e.info.num}</i>` : ''}</b></div>`).join('')}</div></div>` : ''}`;
   const wasHidden = el.classList.contains('hidden');
   el.classList.remove('hidden');
   // discs drawn at the size CSS shows them (both scale with the screen: 72 and 48 px at 1080p)
-  if (now) dpFaceDisc(dp$('dp-now-disc'), nowInfo, Math.round(72 * DP.k), '#f2b544');
-  el.querySelectorAll('canvas[data-n]').forEach(cv => dpFaceDisc(cv, info(next[Number(cv.dataset.n)]), Math.round(48 * DP.k)));
+  if (nowInfo) dpFaceDisc(dp$('dp-now-disc'), nowInfo, Math.round(72 * DP.k), '#f2b544');
+  else if (now) dpUnseenDisc(dp$('dp-now-disc'), Math.round(72 * DP.k));
+  el.querySelectorAll('canvas[data-n]').forEach(cv => { const e = next[Number(cv.dataset.n)]; if (e.unseen) dpUnseenDisc(cv, Math.round(48 * DP.k)); else dpFaceDisc(cv, e.info, Math.round(48 * DP.k)); });
   // never wider than the screen: drop the furthest up-next until it fits
   const ups = [...el.querySelectorAll('.dp-up')], room = window.innerWidth - Math.round(48 * DP.k);
   el.style.maxWidth = 'none';
@@ -270,10 +325,17 @@ function dpToggleFs() {
   else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => dpChip('Full screen was blocked: click the page, then press F'));
 }
 function dpChip(text, ms = 3500) { const c = dp$('dp-chip'); c.textContent = text; c.classList.add('show'); clearTimeout(DP.chipT); DP.chipT = setTimeout(() => c.classList.remove('show'), ms); }
-// "Press F for full screen": shown while windowed, fading out after 4 s (and again when the mouse moves)
+// full screen by any route: the page's own (F), the browser's (F11 / ⌃⌘F), or a kiosk window
+function dpIsFull() {
+  if (document.fullscreenElement) return true;
+  if (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches) return true;
+  return Math.abs(window.innerWidth - screen.width) <= 1 && Math.abs(window.innerHeight - screen.height) <= 1;
+}
+// "Press F for full screen": shown while windowed, fading out after 4 s (and again when the mouse moves);
+// never in full screen, never in a player's embedded view
 function dpFsHint(show = true) {
   const el = dp$('dp-fs'); clearTimeout(DP.fsT);
-  if (!show || DP_EMBED || document.fullscreenElement) { el.classList.remove('show'); return; }
+  if (!show || DP_EMBED || dpIsFull()) { el.classList.remove('show'); return; }
   el.classList.remove('hidden'); void el.offsetWidth; el.classList.add('show');
   DP.fsT = setTimeout(() => el.classList.remove('show'), 4000);
 }
@@ -281,6 +343,7 @@ document.addEventListener('keydown', e => { if ((e.key === 'f' || e.key === 'F')
 // a click anywhere on the TV window goes full screen, as the old centred prompt did
 document.addEventListener('click', e => { if (!DP_EMBED && e.button === 0 && !document.fullscreenElement) dpToggleFs(); });
 document.addEventListener('fullscreenchange', () => { dpFsHint(!document.fullscreenElement); });
+window.addEventListener('resize', () => { if (dpIsFull()) dpFsHint(false); }); // the browser's own full screen
 function dpWake(e) {
   document.body.classList.remove('idle'); clearTimeout(DP.idleT); DP.idleT = setTimeout(() => document.body.classList.add('idle'), 2000);
   if (e && e.type === 'mousemove' && !dp$('dp-fs').classList.contains('show')) dpFsHint();
