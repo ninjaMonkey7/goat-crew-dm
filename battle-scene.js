@@ -319,13 +319,14 @@ function bsFloor(sc) {
   const c = bsCanvas(w * k, h * k), x = c.getContext('2d');
   x.scale(k, k);
   const rnd = bsRng(sc.id + style + seed);
-  let clip = null;
+  let clip = null, plan = null;
   if (style === 'planks') { bsPlanks(x, w, h, g.size, rnd, k); bsPerimeter(x, w, h, g.size, k); }
   else if (style === 'parchment') { bsParchment(x, w, h, g.size, rnd, k); bsInkFrame(x, w, h, g.size); }
-  else if (style === 'dungeon') { const plan = bsDungeonPlan(sc); bsDungeon(x, w, h, plan, rnd, k); clip = plan.path; }
+  else if (style === 'dungeon') { plan = bsDungeonPlan(sc); bsDungeon(x, w, h, plan, rnd, k); clip = plan.path; }
   else { bsFlagstone(x, w, h, g.size, rnd, k); bsPerimeter(x, w, h, g.size, k); }
-  // clip: where the floor is (the grid is drawn there only); null = everywhere
-  const out = { mips: bsMips(c), scale: k, light: style === 'parchment', clip };
+  // clip: where the floor is (the grid is drawn there only); null = everywhere. plan / perimeter: walls the
+  // view strokes again as vectors each frame, so they stay crisp at any zoom and pixel ratio
+  const out = { mips: bsMips(c), scale: k, light: style === 'parchment', clip, plan, perimeter: style === 'flagstone' || style === 'planks' ? g.size * 0.06 : 0 };
   if (BS_FLOOR_CACHE.size > 6) BS_FLOOR_CACHE.delete(BS_FLOOR_CACHE.keys().next().value);
   BS_FLOOR_CACHE.set(key, out);
   return out;
@@ -1574,6 +1575,7 @@ class BattleView {
     for (let i = 1; i <= 7; i++) { ctx.strokeStyle = `rgba(0,0,0,${0.09 - i * 0.011})`; ctx.lineWidth = 4; ctx.strokeRect(mx - i * 4 + 2, my - i * 4 + 6, w * z + i * 8 - 4, h * z + i * 8 - 4); }
     this.drawBackground(sc, w, h);
     this.drawGrid(sc, w, h);
+    this.drawWalls(w, h);
     if (!P) this.drawBounds(w, h);
     this._chips = []; this._placed = [];
     const drawings = this.drawingList(), tpls = drawings.filter(d => d.type === 'template');
@@ -1589,6 +1591,25 @@ class BattleView {
     if (!P) this.drawLabels();
     anim = this.drawOverlays(sc, now) || anim;
     return anim;
+  }
+  // the floor's walls again as vectors over the bitmap (which softens at high zoom): wall cores and doors
+  drawWalls(w, h) {
+    const src = this._floorSrc; if (!src || !(src.plan || src.perimeter)) return;
+    const { ctx, dpr, cam } = this, k = dpr * cam.z;
+    ctx.save(); ctx.setTransform(k, 0, 0, k, dpr * cam.x, dpr * cam.y);
+    ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip();
+    ctx.strokeStyle = '#050607';
+    if (src.perimeter) { ctx.lineWidth = src.perimeter * 2; ctx.strokeRect(0, 0, w, h); }
+    else {
+      const p = src.plan, vr = this.viewRect(), m = p.s;
+      ctx.lineCap = 'square'; ctx.lineWidth = p.s * 0.06; ctx.stroke(p.walls);
+      for (const d of p.doors) {
+        const dx = p.ox + d.in[0] * p.s, dy = p.oy + d.in[1] * p.s;
+        if (dx > vr.x + vr.w + m || dy > vr.y + vr.h + m || dx + m * 2 < vr.x || dy + m * 2 < vr.y) continue;
+        bsDoor(ctx, d, p, k);
+      }
+    }
+    ctx.restore();
   }
   // a crisp hairline at the map's edge (DM view), so the bounds read on any floor
   drawBounds(w, h) {
@@ -1612,6 +1633,7 @@ class BattleView {
     const vr = this.viewRect(), x0 = Math.max(0, vr.x), y0 = Math.max(0, vr.y), x1 = Math.min(w, vr.x + vr.w), y1 = Math.min(h, vr.y + vr.h);
     this._lightFloor = !!(src && src.light);
     this._floorClip = (src && src.clip) || null;
+    this._floorSrc = src || null;
     ctx.save(); ctx.setTransform(dpr * cam.z, 0, 0, dpr * cam.z, dpr * cam.x, dpr * cam.y);
     if (!src) {
       ctx.fillStyle = '#171a22'; ctx.fillRect(0, 0, w, h);
