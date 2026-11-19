@@ -64,11 +64,13 @@ const BESTIARY = [
 ];
 
 const _bd = n => 1 + Math.floor(Math.random() * n);
-/* Build a tracker row for monster m; numbers it after the ones already in the encounter ("Ghoul 3"). */
+/* Build a tracker row for monster m; numbers it after the ones already in the encounter ("Ghoul 3"), AC filled in. */
 function monsterCombatant(m, existing = []) {
   const n = existing.filter(x => x.monster === m.id || String(x.name || '').replace(/\s+\d+$/, '') === m.name).length + 1;
   const atk = m.attacks.filter(a => a[0] !== 'Multiattack').slice(0, 2).map(a => `${a[0]} ${a[1]} ${a[2].split(';')[0].split(',')[0]}`).join(' · ');
-  return { init: _bd(20) + m.dex, name: `${m.name} ${n}`, hp: m.hp, maxHp: m.hp, notes: `AC ${m.ac} · ${atk}`.slice(0, 160), monster: m.id };
+  let notes = `AC ${m.ac} · ${atk}`;
+  if (notes.length > 160) notes = notes.slice(0, 160).replace(/\s+\S*$/, '').replace(/[\s·,;:+(–-]+$/, '') + '…'; // never mid-word
+  return { init: _bd(20) + m.dex, name: `${m.name} ${n}`, hp: m.hp, maxHp: m.hp, ac: m.ac, notes, monster: m.id };
 }
 function statBlockHTML(m) {
   const e = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

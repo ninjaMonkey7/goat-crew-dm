@@ -767,157 +767,501 @@ async function renderQuests(c) {
 const shortName = u => String(u || '').replace(/\s*\((player|dm|co-dm)\)\s*$/i, '');
 
 // ---------- BATTLE ----------
-/* Initiative tracker. Fixed columns: init · avatar · name/stats · −5 −1 · HP (64px) · +1 +5 · stat block.
-   The ± steppers show on hover / focus (always on touch screens); the HP chip is click-to-edit.
-   UI-only state (selected row, open stat blocks) survives the live re-renders. */
-const BT = { sel: null, open: new Set(), ro: null };
-const BT_NARROW = 560; // px of card width below which the row layout folds (phone, side rail)
-const btKey = (x, i) => String(x.id || i);
-/* HP: unknown when there is no max (and nothing recorded); otherwise a tone by the remaining fraction */
+/* Initiative tracker. The list is always in turn order (initiative high to low), and the saved array is
+   kept in that order too, because the other DM's screen, the battle map and the TV read encounter.json.
+   A DM on a wide screen gets two panes: the list, and the selected row's details on the right (the
+   monster's stat block, or a PC summary). Narrower, a row's details open underneath it.
+   UI-only state (selection, focus, the row that just moved) survives the live re-renders. */
+/* BT.sel: the row whose details show. null = follow whoever's turn it is; '' = none (closed on a narrow screen). */
+const BT = { sel: null, ro: null, raf: 0, flash: null, refocus: null, chain: null, pending: 0 };
+const BT_WIDE = 760; // card width (px) from which the details pane sits beside the list
+const BT_CONDITIONS = ['Blinded', 'Charmed', 'Deafened', 'Exhaustion', 'Frightened', 'Grappled', 'Incapacitated', 'Invisible',
+  'Paralyzed', 'Petrified', 'Poisoned', 'Prone', 'Restrained', 'Stunned', 'Unconscious'];
+const BT_SEVERE = /^(incapacitated|paralyzed|petrified|stunned|unconscious)\b/i; // these cost the creature its turn
+const BT_GRIP = '<svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" aria-hidden="true"><circle cx="2.5" cy="3" r="1.3"/><circle cx="7.5" cy="3" r="1.3"/><circle cx="2.5" cy="8" r="1.3"/><circle cx="7.5" cy="8" r="1.3"/><circle cx="2.5" cy="13" r="1.3"/><circle cx="7.5" cy="13" r="1.3"/></svg>';
+const btNum = v => Number(v) || 0;
+const btKey = x => String(x.id || `${x.characterId || x.monster || ''}:${x.name || ''}`);
+const btColl = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const btMon = x => (x && x.monster && typeof BESTIARY !== 'undefined' && BESTIARY.find(b => b.id === x.monster)) || null;
+const btConds = x => (Array.isArray(x.conditions) ? x.conditions : []).filter(Boolean).map(String);
+const btAc = (x, ch, m) => (x.ac !== undefined && x.ac !== null && x.ac !== '') ? x.ac : (ch && ch.ac != null && ch.ac !== '') ? ch.ac : m ? m.ac : null;
+
+/* ----- turn order ----- */
+/* Ties: the Dex modifier where it's known (monsters, from the bestiary). A PC's usually isn't recorded,
+   so PCs go ahead of monsters on a tie; anyone else without one goes last. Then name. */
+const btDex = x => { const m = btMon(x); return m ? m.dex : x.characterId ? Infinity : -Infinity; };
+function btCmp(a, b) {
+  const d = btNum(b.init) - btNum(a.init); if (d) return d;
+  const da = btDex(a), db = btDex(b);
+  if (da !== db) return da > db ? -1 : 1;
+  return (b.characterId ? 1 : 0) - (a.characterId ? 1 : 0) || btColl.compare(String(a.name || ''), String(b.name || ''));
+}
+const btInOrder = list => list.every((x, i) => !i || btNum(list[i - 1].init) >= btNum(x.init));
+/* Put the combatants in turn order, in place, and keep the turn on the same combatant.
+   `moved` are rows just added or whose initiative changed: each goes to its place among its ties. The
+   rest keep their order, so a tie the DM dragged into place stays put. If the rest aren't in initiative
+   order (an encounter saved before this sorted), the whole list is sorted; `full` forces that. */
+function btSortEnc(enc, moved = [], full = false) {
+  const list = enc.combatants || (enc.combatants = []);
+  const active = list[Math.min(btNum(enc.turn), list.length - 1)];
+  const mv = new Set(moved);
+  const order = list.filter(x => !mv.has(x));
+  if (full || !btInOrder(order)) order.sort(btCmp);
+  for (const x of list.filter(x => mv.has(x))) {
+    const at = order.findIndex(y => btCmp(x, y) < 0);
+    order.splice(at < 0 ? order.length : at, 0, x);
+  }
+  list.splice(0, list.length, ...order);
+  if (active) enc.turn = list.indexOf(active);
+  return enc;
+}
+/* Take combatant i out. If it was their turn, the turn passes to whoever was next. */
+function btRemove(enc, i) {
+  const list = enc.combatants || [], t = btNum(enc.turn);
+  if (i < 0 || i >= list.length) return;
+  list.splice(i, 1);
+  if (i < t) enc.turn = t - 1;
+  else if (t >= list.length) { enc.turn = 0; if (list.length && i === t) enc.round = btNum(enc.round || 1) + 1; }
+}
+/* Every save from the Battle and DM tabs goes through here, so the file is in turn order from the first change on. */
+function btSave(enc) {
+  btSortEnc(enc);
+  return api('/api/encounter', { method: 'PUT', body: enc });
+}
+/* Saves run one after another (fast clicks queue up); the screen already shows the change. */
+function btQueueSave(c, enc) {
+  BT.pending++;
+  BT.chain = (BT.chain || Promise.resolve()).then(() => btSave(enc))
+    .catch(e => { toast(`Could not save: ${e.message || e}`, 4000); refresh(c); })
+    .finally(() => { BT.pending--; });
+}
+
+/* ----- cells ----- */
+/* HP: not tracked when there's no max and nothing recorded; otherwise a tone by what's left */
 function btHp(x) {
-  const hp = Number(x.hp) || 0, max = Number(x.maxHp) || 0;
-  if (max <= 0) return { known: hp > 0, hp, max: 0, pct: hp > 0 ? 100 : 0, tone: 'unk' };
+  const hp = btNum(x.hp), max = btNum(x.maxHp);
+  if (max <= 0) return { known: hp > 0, hp, max: 0, pct: hp > 0 ? 100 : 0, tone: hp > 0 ? 'ok' : 'unk' };
   const pct = Math.max(0, Math.min(100, Math.round(100 * hp / max)));
   return { known: true, hp, max, pct, tone: hp <= 0 ? 'dead' : pct <= 25 ? 'low' : pct <= 50 ? 'mid' : 'ok' };
 }
-function btHpInner(x) {
-  const h = btHp(x);
-  if (!h.known) return `<span class="bt-hp-val">—</span><span class="bt-hp-bar"></span>`;
-  return `<span class="bt-hp-val">${h.hp}${h.max ? `<small>/${h.max}</small>` : ''}</span><span class="bt-hp-bar">${h.max ? `<i style="width:${h.pct}%"></i>` : ''}</span>`;
+const btHpInner = h => `<span class="bt-hp-val">${h.hp}${h.max ? `<small>/${h.max}</small>` : ''}</span><span class="bt-hp-bar">${h.max ? `<i style="width:${h.pct}%"></i>` : ''}</span>`;
+/* Avatar: a PC's portrait (or initials); for anyone else a dark coin with the creature's glyph, as on the map
+   (the glyph comes from the battle map's renderer when it's loaded), and the same number badge the map puts on
+   same-named monsters ("Giant spider 2" shows 2). */
+const BT_GLYPH = new Map();
+function btGlyph(x) {
+  if (x.characterId || typeof bsEmojiFor !== 'function' || typeof bsGlyph !== 'function') return '';
+  try {
+    const e = bsEmojiFor(x.monster, String(x.name || '').replace(/\s+\d+$/, ''));
+    if (e && !BT_GLYPH.has(e)) BT_GLYPH.set(e, bsGlyph(e, 72).toDataURL());
+    return e ? BT_GLYPH.get(e) : '';
+  } catch (_) { return ''; }
 }
-function btPaintHp(btn, x) {
-  const h = btHp(x);
-  btn.className = `bt-hp t-${h.tone}`;
-  btn.innerHTML = btHpInner(x);
-  btn.setAttribute('aria-label', `HP ${h.known ? h.hp + (h.max ? ' of ' + h.max : '') : 'unknown'}. Click to set`);
+function btInitials(name) {
+  const w = String(name || '').replace(/\s+\d+$/, '').trim().split(/\s+/).filter(Boolean);
+  return w.length ? (w.length === 1 ? w[0][0] : w[0][0] + w[w.length - 1][0]).toUpperCase() : '?';
 }
-function btAvatar(x, ch, isDM) {
-  // players' copy of the encounter has no monster ids, so their non-PC rows stay neutral
+function btAvatar(x, chars, isDM, size = '') {
+  const ch = x.characterId ? chars.find(c => c.id === x.characterId) : null;
+  // the players' copy of the encounter has no monster ids, so their non-PC rows stay neutral
   const side = x.characterId ? 'pc' : x.monster ? 'foe' : isDM ? 'npc' : 'other';
-  const name = String(x.name || '?').trim();
-  if (ch && ch.portrait) return `<span class="bt-av ${side}"><img src="${esc(ch.portrait)}" alt="" loading="lazy"></span>`;
-  return `<span class="bt-av ${side}" aria-hidden="true">${esc((name[0] || '?').toUpperCase())}</span>`;
+  const num = x.characterId ? '' : (String(x.name || '').match(/\s(\d+)$/) || [])[1] || '';
+  const glyph = ch ? '' : btGlyph(x);
+  const face = ch && ch.portrait ? `<img src="${esc(ch.portrait)}" alt="" loading="lazy">`
+    : glyph ? `<img class="bt-glyph" src="${glyph}" alt="">` : `<span>${esc(btInitials(x.name))}</span>`;
+  return `<span class="bt-av ${side} ${size}" aria-hidden="true"><span class="bt-av-c">${face}</span>${num ? `<b class="bt-av-n">${num}</b>` : ''}</span>`;
+}
+/* One quiet line under the name: a PC's class, a monster's attacks (its AC has its own column), or the DM's note */
+function btSubText(x, ch, m) {
+  const notes = String(x.notes || '').trim();
+  if (x.characterId) return notes && !/^pc$/i.test(notes) ? notes : ch ? String(ch.klass || '') : '';
+  const own = notes.replace(/^AC\s*\d+\s*·\s*/i, '');
+  if (own) return own;
+  return m ? m.attacks.filter(a => a[0] !== 'Multiattack').map(a => `${a[0]} ${a[1]}`.trim()).join(' · ') : '';
+}
+function btChips(conds, max = 99) {
+  const shown = conds.slice(0, conds.length > max ? max - 1 : max);
+  return shown.map(c => `<span class="bt-chip ${BT_SEVERE.test(c) ? 'sev' : ''}">${esc(c)}</span>`).join('')
+    + (conds.length > shown.length ? `<span class="bt-chip more" title="${esc(conds.slice(shown.length).join(', '))}">+${conds.length - shown.length}</span>` : '');
+}
+/* Stat text stays on one line and is cut at a word boundary, with an ellipsis, never mid-word. */
+function btFit(root) {
+  root.querySelectorAll('.bt-sub-t[data-full]').forEach(el => {
+    const full = el.dataset.full;
+    el.textContent = full;
+    if (!el.clientWidth || el.scrollWidth <= el.clientWidth + 1) return;
+    const words = full.split(/\s+/);
+    const cut = n => words.slice(0, n).join(' ').replace(/[\s·,;:+(–—-]+$/u, '') + '…';
+    let lo = 0, hi = words.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; el.textContent = cut(mid); if (el.scrollWidth <= el.clientWidth + 1) lo = mid; else hi = mid - 1; }
+    el.textContent = lo ? cut(lo) : '';
+  });
+}
+
+/* ----- inline editors ----- */
+/* Swap a value button for a text field. Enter or leaving the field commits, Esc cancels. parse(text) applies
+   the value and returns true, or returns a message for text it can't read. Resolves true when something changed. */
+function btEdit(btn, { value = '', placeholder = '', label, parse }) {
+  const inp = document.createElement('input');
+  inp.className = 'bt-in ' + (btn.classList.contains('bt-d-val') ? 'bt-in-lg' : '');
+  inp.value = value; inp.placeholder = placeholder;
+  inp.setAttribute('aria-label', label);
+  inp.autocomplete = 'off'; inp.spellcheck = false; inp.enterKeyHint = 'done';
+  const cs = getComputedStyle(btn);
+  inp.style.gridArea = cs.gridArea;
+  inp.style.width = Math.max(btn.offsetWidth, 52) + 'px';
+  btn.replaceWith(inp); inp.focus(); inp.select();
+  return new Promise(resolve => {
+    let done = false;
+    const finish = (commit, fromBlur) => {
+      if (done) return;
+      const v = inp.value.trim().replace(/[−–]/g, '-');
+      if (commit && v !== String(value)) {
+        const r = parse(v);
+        if (typeof r === 'string') {
+          toast(r, 3000);
+          if (!fromBlur) { inp.select(); return; }
+        } else if (r) { done = true; resolve(true); return; }
+      }
+      done = true; inp.replaceWith(btn); if (!fromBlur) btn.focus(); resolve(false);
+    };
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+    });
+    inp.addEventListener('blur', () => finish(true, true));
+  });
+}
+/* Conditions: a small menu of the standard conditions (plus any the DM typed), toggled in place.
+   onToggle redraws the tracker behind it; onClose(changed) saves once when the menu closes. */
+function btCondMenu(anchor, x, onToggle, onClose) {
+  document.querySelectorAll('.bt-pop').forEach(p => p.remove());
+  const pop = document.createElement('div');
+  pop.className = 'bt-pop'; pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', `Conditions: ${x.name || ''}`);
+  let changed = false;
+  const has = n => btConds(x).some(c => c.toLowerCase() === n.toLowerCase());
+  const paint = () => {
+    const extra = btConds(x).filter(c => !BT_CONDITIONS.some(b => b.toLowerCase() === c.toLowerCase()));
+    const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.c : null;
+    const grid = pop.querySelector('.bt-pop-grid');
+    grid.innerHTML = [...BT_CONDITIONS, ...extra].map(n =>
+      `<button type="button" class="bt-pop-c ${has(n) ? 'on' : ''} ${BT_SEVERE.test(n) ? 'sev' : ''}" data-c="${esc(n)}" aria-pressed="${has(n)}">${esc(n)}</button>`).join('');
+    if (focused) { const b = [...grid.children].find(el => el.dataset.c === focused); if (b) b.focus(); }
+  };
+  const set = (n, on) => {
+    const cur = btConds(x).filter(c => c.toLowerCase() !== n.toLowerCase());
+    if (on) cur.push(n);
+    if (cur.length) x.conditions = cur; else delete x.conditions;
+    changed = true; paint(); onToggle();
+  };
+  pop.innerHTML = `<div class="bt-pop-h"><b>Conditions</b><span>${esc(x.name || '')}</span></div><div class="bt-pop-grid"></div>
+    <input class="bt-pop-in" placeholder="Something else, e.g. Hexed" aria-label="Add another condition" maxlength="28" autocomplete="off">`;
+  paint();
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+  const left = Math.max(8, Math.min(r.left, innerWidth - pw - 8));
+  const top = r.bottom + 6 + ph <= innerHeight - 8 ? r.bottom + 6 : Math.max(8, r.top - 6 - ph);
+  pop.style.left = left + scrollX + 'px'; pop.style.top = top + scrollY + 'px'; // page coordinates: it scrolls with the page
+  const close = () => {
+    if (!pop.isConnected) return;
+    pop.remove();
+    document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', esc1, true);
+    removeEventListener('resize', close);
+    onClose(changed);
+  };
+  const outside = e => { if (!pop.contains(e.target)) close(); };
+  const esc1 = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+  pop.addEventListener('click', e => { const b = e.target.closest('.bt-pop-c'); if (b) set(b.dataset.c, !has(b.dataset.c)); });
+  pop.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.classList.contains('bt-pop-in')) {
+      e.preventDefault();
+      const v = e.target.value.trim().replace(/\s+/g, ' ');
+      if (v && !has(v)) set(v.replace(/^./, s => s.toUpperCase()), true);
+      e.target.value = '';
+    }
+  });
+  document.addEventListener('keydown', esc1, true);
+  setTimeout(() => {
+    document.addEventListener('pointerdown', outside, true);
+    addEventListener('resize', close);
+  }, 0);
+  const first = pop.querySelector('.bt-pop-c'); if (first) first.focus();
+}
+
+/* ----- rows + details ----- */
+function btRowHTML(x, i, o) {
+  const k = o.keys[i], kk = esc(k), h = btHp(x), ch = o.charOf(x), m = btMon(x);
+  const down = x.down ?? (h.max > 0 && h.hp <= 0);
+  const name = esc(x.name || 'Unnamed');
+  const cls = ['bt-row', i === o.turn && 'turn', o.mine(x) && 'mine', down && 'down', o.isDM && k === o.detailKey && 'sel', BT.flash === k && 'bt-flash'].filter(Boolean).join(' ');
+  const who = `<span class="bt-name">${down ? ic('skull', 'ic-red') : ''}<span class="bt-name-t">${name}</span>${o.mine(x) ? '<span class="bt-you">you</span>' : ''}${x.conc ? `<span class="bt-conc-mini" title="Concentrating">${ic('brain')}</span>` : ''}</span>`;
+  const cur = i === o.turn ? 'aria-current="true"' : '';
+  if (!o.isDM) return `<div class="${cls}" role="listitem" ${cur}><span class="bt-init">${esc(x.init ?? '')}</span>${btAvatar(x, o.chars, false)}<span class="bt-who">${who}</span></div>`;
+  const conds = btConds(x), ac = btAc(x, ch, m), sub = btSubText(x, ch, m);
+  const prev = o.list[i - 1], next = o.list[i + 1];
+  const tie = (prev && btNum(prev.init) === btNum(x.init)) || (next && btNum(next.init) === btNum(x.init));
+  return `<div class="${cls}" role="listitem" tabindex="0" data-k="${kk}" ${cur}>
+    ${tie ? `<button class="bt-grip bt-ghost" data-act="grip" data-k="${kk}" title="Tied on initiative: drag to reorder" aria-label="Reorder ${name} among the tie (arrow keys)">${BT_GRIP}</button>` : ''}
+    <button class="bt-init" data-act="init" data-k="${kk}" title="Initiative: click to change" aria-label="Initiative ${esc(x.init ?? 0)}. Click to change">${esc(x.init ?? 0)}</button>
+    ${btAvatar(x, o.chars, true)}
+    <span class="bt-who">${who}<span class="bt-sub">${ac != null ? `<span class="bt-sub-ac">AC ${esc(ac)}</span>` : ''}${conds.length ? `<span class="bt-chips">${btChips(conds, 3)}</span>` : ''}${sub ? `<span class="bt-sub-t" data-full="${esc(sub)}" title="${esc(sub)}">${esc(sub)}</span>` : ''}</span></span>
+    <button class="bt-ac ${ac == null ? 'bt-ghost' : ''}" data-act="ac" data-k="${kk}" title="Armour class: click to change" aria-label="${ac == null ? `Set AC for ${name}` : `AC ${esc(ac)}. Click to change`}">${ac == null ? ic('plus') : esc(ac)}</button>
+    ${h.known ? `<button class="bt-hp t-${h.tone}" data-act="hp" data-k="${kk}" title="Set HP: 12, 12/30, −7 or +5" aria-label="HP ${h.hp}${h.max ? ' of ' + h.max : ''}. Click to set">${btHpInner(h)}</button>`
+      : `<button class="bt-hp-add bt-ghost" data-act="hp" data-k="${kk}" title="Track HP: 12 or 12/30" aria-label="Track HP for ${name}">${ic('plus')}HP</button>`}
+    <button class="bt-cond ${conds.length ? '' : 'bt-ghost'}" data-act="cond" data-k="${kk}" title="Conditions: click to change" aria-label="${conds.length ? `Conditions: ${esc(conds.join(', '))}` : 'Add a condition'}">${conds.length ? btChips(conds, 2) : `${ic('plus')}<span>Condition</span>`}</button>
+    <button class="bt-conc ${x.conc ? 'on' : 'bt-ghost'}" data-act="conc" data-k="${kk}" aria-pressed="${!!x.conc}" title="${x.conc ? 'Concentrating: click to end it' : 'Mark as concentrating'}" aria-label="Concentrating">${ic('brain')}</button>
+  </div>`;
+}
+function btDetailHTML(x, i, o) {
+  const k = o.keys[i], kk = esc(k), h = btHp(x), ch = o.charOf(x), m = btMon(x), ac = btAc(x, ch, m), conds = btConds(x);
+  const name = esc(x.name || 'Unnamed');
+  const sub = ch ? [[ch.race, ch.klass].filter(Boolean).join(' '), ch.level ? `Level\u00a0${ch.level}` : ''].filter(Boolean).join(' · ')
+    : m ? `${m.name} · CR ${m.cr}` : x.characterId ? 'Player character' : '';
+  const notes = String(x.notes || '').trim();
+  const ownNotes = notes && !/^pc$/i.test(notes) && !(m && /^AC\s*\d+\s*·/i.test(notes)) ? notes : '';
+  const set = '<span class="bt-d-set">Set</span>';
+  return `<section class="bt-detail" aria-label="${name}">
+    <div class="bt-d-head">${btAvatar(x, o.chars, true, 'lg')}
+      <div class="bt-d-id"><h3>${name}</h3>${sub ? `<div class="bt-d-sub">${esc(sub)}</div>` : ''}</div>
+      ${i === o.turn ? '<span class="bt-d-now">Their turn</span>' : ''}</div>
+    <div class="bt-d-vitals">
+      <div class="bt-d-tile bt-d-hp t-${h.tone}"><span class="bt-d-lbl">HP</span>
+        <button class="bt-d-val" data-act="hp" data-k="${kk}" title="Set HP: 12, 12/30, −7 or +5" aria-label="HP ${h.known ? h.hp + (h.max ? ' of ' + h.max : '') : 'not tracked'}. Click to set">${h.known ? `${h.hp}${h.max ? `<small>/${h.max}</small>` : ''}` : set}</button>
+        ${h.max ? `<span class="bt-hp-bar"><i style="width:${h.pct}%"></i></span>` : ''}</div>
+      <div class="bt-d-tile"><span class="bt-d-lbl">AC</span><button class="bt-d-val" data-act="ac" data-k="${kk}" aria-label="AC ${ac ?? 'not set'}. Click to change">${ac != null ? esc(ac) : set}</button></div>
+      <div class="bt-d-tile"><span class="bt-d-lbl">Init</span><button class="bt-d-val" data-act="init" data-k="${kk}" aria-label="Initiative ${esc(x.init ?? 0)}. Click to change">${esc(x.init ?? 0)}</button></div>
+    </div>
+    ${h.known ? `<div class="bt-d-steps" role="group" aria-label="Adjust HP">${[-5, -1, 1, 5].map(d =>
+      `<button class="bt-pm ${d < 0 ? 'dmg' : 'heal'}" data-act="hpd" data-d="${d}" data-k="${kk}" aria-label="${d < 0 ? 'Damage' : 'Heal'} ${Math.abs(d)}">${d < 0 ? '−' : '+'}${Math.abs(d)}</button>`).join('')}</div>` : ''}
+    <div class="bt-d-sec bt-d-conds">
+      <div class="bt-d-lbl">Conditions</div>
+      <div class="bt-d-chips">${conds.map(c => `<span class="bt-chip ${BT_SEVERE.test(c) ? 'sev' : ''}">${esc(c)}<button class="bt-chip-x" data-act="uncond" data-c="${esc(c)}" data-k="${kk}" aria-label="Remove ${esc(c)}">${ic('x')}</button></span>`).join('')}<button class="bt-chip-add" data-act="cond" data-k="${kk}">${ic('plus')}${conds.length ? '<span class="sr">Add a condition</span>' : 'Add'}</button></div>
+    </div>
+    <button class="bt-d-conc ${x.conc ? 'on' : ''}" data-act="conc" data-k="${kk}" role="switch" aria-checked="${!!x.conc}">${ic('brain')}<span>Concentrating</span><i class="bt-switch" aria-hidden="true"></i></button>
+    ${m ? `<div class="bt-d-sec bt-sb">${statBlockHTML(m)}</div>` : ''}
+    ${ownNotes ? `<div class="bt-d-sec bt-d-note"><div class="bt-d-lbl">Notes</div><p class="bt-d-notes">${esc(ownNotes)}</p></div>` : ''}
+    <div class="bt-d-foot">${ch ? `<button class="btn small" data-act="sheet" data-id="${esc(ch.id)}">${ic('users')} Character sheet</button>` : ''}
+      <button class="btn small ghost bt-d-rm" data-act="remove" data-k="${kk}" title="Remove from the fight">${ic('trash')}<span>Remove</span></button></div>
+  </section>`;
 }
 
 async function renderBattle(c) {
   const enc = await load('encounter');
   const isDM = isStaff(S.me);
-  const combatants = enc.combatants || [];
-  if (!combatants.length) {
-    c.innerHTML = `<div class="card bt-empty"><h3>${ic('swords')} Battle</h3>
-      <p class="muted">No encounter running.${isDM ? ' Build one on the DM tab (+ Monster, + Add whole party), then run it from here.' : ' The moment the DM rolls initiative, the turn order shows up here — live.'}</p>
-      ${isDM ? '<button class="btn dm" id="to-dm">Open the encounter tracker</button>' : ''}</div>`;
+  if (!(enc.combatants || []).length) {
+    c.innerHTML = `<div class="card bt-empty"><span class="bt-empty-ic">${ic('swords')}</span><h3>No fight running</h3>
+      <p class="muted">${isDM ? 'Add the party and some monsters on the DM tab. Initiative is rolled for monsters, and the order shows up here, sorted.' : 'When the DM rolls initiative, the turn order shows up here, live.'}</p>
+      ${isDM ? '<button class="btn primary" id="to-dm">Build an encounter</button>' : ''}</div>`;
     if (isDM) $('#to-dm').onclick = () => { S.tab = 'dm'; localStorage.setItem('gc_tab', 'dm'); render(); };
     return;
   }
   const chars = await load('characters');
-  const charOf = x => x.characterId ? chars.find(ch => ch.id === x.characterId) : null;
-  const myId = S.me.characterId;
-  const myChar = chars.find(x => x.id === myId);
-  const myName = myChar ? myChar.name : '';
-  const turn = Math.min(enc.turn || 0, combatants.length - 1);
-  const active = combatants[turn] || null;
-  const mineRow = x => (myId && x.characterId === myId);
-  const activeIsMine = !isDM && active && (mineRow(active) || (myName && active.name && myName.toLowerCase().startsWith(String(active.name).toLowerCase())));
-  const mon = x => (isDM && x.monster && typeof BESTIARY !== 'undefined') ? BESTIARY.find(b => b.id === x.monster) : null;
-  const nextUp = combatants.length > 1 ? combatants[(turn + 1) % combatants.length] : null;
-  const keys = combatants.map(btKey);
+  btSortEnc(enc); // shown in turn order; the DM's next change saves it that way (just looking never saves)
+  btDraw(c, enc, chars, isDM);
+}
+
+function btDraw(c, enc, chars, isDM, measured) {
+  const list = enc.combatants, n = list.length;
+  const turn = Math.max(0, Math.min(btNum(enc.turn), n - 1));
+  const charOf = x => (x.characterId && chars.find(ch => ch.id === x.characterId)) || null;
+  const myId = S.me.characterId, myChar = chars.find(x => x.id === myId), myName = myChar ? myChar.name : '';
+  const mine = x => !!(myId && x.characterId === myId);
+  const active = list[turn];
+  const activeIsMine = !isDM && active && (mine(active) || (myName && active.name && myName.toLowerCase().startsWith(String(active.name).toLowerCase())));
+  const nextUp = n > 1 ? list[(turn + 1) % n] : null;
+  const seen = {};
+  const keys = list.map(x => { const k = btKey(x); seen[k] = (seen[k] || 0) + 1; return seen[k] > 1 ? `${k}#${seen[k]}` : k; });
+  const idx = k => keys.indexOf(k);
   if (BT.sel && !keys.includes(BT.sel)) BT.sel = null;
-  c.innerHTML = `
-    <div class="card bt ${isDM ? 'bt-dm' : 'bt-player'} ${c.clientWidth < BT_NARROW ? 'bt-narrow' : ''}">
-      <div class="bt-head">
-        <div class="bt-title">
-          <span class="bt-round">Round <b>${enc.round || 1}</b></span>
-          <span class="bt-now">${active ? `<span><b>${esc(active.name || '—')}</b>'s turn</span>` : ''}${nextUp ? `<span class="bt-next muted">Next: ${esc(nextUp.name || '—')}</span>` : ''}</span>
-        </div>
-        ${isDM ? `<div class="bt-actions">
-            <span class="bt-view" title="You see HP and stat blocks; players see the order only">${ic('eye')} DM view</span>
-            <button class="btn small icon-btn" id="b-prev" title="Previous turn" aria-label="Previous turn">${ic('skipback')}</button>
-            <button class="btn small primary" id="b-next" title="Next turn (N)">${ic('play')} Next turn <kbd class="bt-kbd">N</kbd></button>
-          </div>` : `<span class="bt-live"><i></i>Live</span>`}
+  let width = measured;
+  if (width == null) { const cs = getComputedStyle(c); width = c.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0); }
+  const wide = isDM && Math.min(width, 960) >= BT_WIDE;
+  const detailKey = !isDM ? null : BT.sel === '' ? (wide ? keys[turn] : null) : (BT.sel || keys[turn]);
+  const o = { isDM, chars, charOf, keys, turn, mine, list, detailKey };
+  const rows = list.map((x, i) => btRowHTML(x, i, o) + (isDM && !wide && keys[i] === detailKey ? `<div class="bt-xrow">${btDetailHTML(x, i, o)}</div>` : '')).join('');
+  const di = wide ? idx(detailKey) : -1;
+  const anyCond = list.some(x => btConds(x).length);
+  c.innerHTML = `<div class="bt-wrap"><div class="card bt ${isDM ? 'bt-dm' : 'bt-player'} ${wide ? 'bt-wide' : 'bt-stack'} ${anyCond ? '' : 'bt-nocond'}">
+    <div class="bt-head">
+      <div class="bt-title">
+        <span class="bt-round">Round <b>${btNum(enc.round) || 1}</b></span>
+        <span class="bt-now">${active ? `<span class="bt-now-who"><b>${esc(active.name || 'Unnamed')}</b>’s turn</span>` : ''}${nextUp ? `<span class="bt-next">Next: ${esc(nextUp.name || 'Unnamed')}</span>` : ''}</span>
       </div>
-      ${activeIsMine ? `<div class="your-turn">${ic('swords')} YOUR TURN</div>` : ''}
-      <div class="bt-list" role="list">
-        ${combatants.map((x, i) => {
-          const k = btKey(x, i);
-          const down = x.down ?? (Number(x.maxHp) > 0 && Number(x.hp) <= 0);
-          const m = mon(x);
-          // the avatar ring already says "PC", so a bare "PC" note is dropped
-          const notes = isDM && x.notes && !(x.characterId && /^\s*pc\s*$/i.test(x.notes)) ? String(x.notes) : '';
-          const cls = ['bt-row', i === turn ? 'turn' : '', mineRow(x) ? 'mine' : '', down ? 'down' : '', BT.sel === k ? 'sel' : ''].filter(Boolean).join(' ');
-          return `<div class="${cls}" role="listitem" data-row="${i}" ${i === turn ? 'aria-current="true"' : ''}>
-            <span class="bt-init" title="Initiative">${x.init ?? '—'}</span>
-            ${btAvatar(x, charOf(x), isDM)}
-            <span class="bt-who">
-              <span class="bt-name">${down ? ic('skull', 'ic-red') : ''}<span class="bt-name-t">${esc(x.name || '—')}</span>${mineRow(x) ? '<span class="bt-you">you</span>' : ''}</span>
-              ${notes ? `<span class="bt-notes" title="${esc(notes)}" data-notes>${esc(notes)}</span>` : ''}
-            </span>
-            ${isDM ? `
-            <span class="bt-step bt-minus"><button class="bt-pm" data-hp="-5" data-i="${i}" aria-label="−5 HP">−5</button><button class="bt-pm" data-hp="-1" data-i="${i}" aria-label="−1 HP">−1</button></span>
-            <button class="bt-hp t-${btHp(x).tone}" data-hpedit="${i}" title="Click to set HP: 12, 12/30, −7 or +5" aria-label="HP ${btHp(x).known ? btHp(x).hp + (btHp(x).max ? ' of ' + btHp(x).max : '') : 'unknown'}. Click to set">${btHpInner(x)}</button>
-            <span class="bt-step bt-plus"><button class="bt-pm" data-hp="1" data-i="${i}" aria-label="+1 HP">+1</button><button class="bt-pm" data-hp="5" data-i="${i}" aria-label="+5 HP">+5</button></span>
-            <span class="bt-sb">${m ? `<button class="bt-sb-btn ${BT.open.has(k) ? 'on' : ''}" data-stat="${i}" title="Stat block" aria-label="Stat block" aria-expanded="${BT.open.has(k)}">${ic('book')}</button>` : ''}</span>` : ''}
-          </div>${m ? `<div class="statblock ${BT.open.has(k) ? '' : 'hidden'}" data-statblock="${i}">${statBlockHTML(m)}</div>` : ''}`;
-        }).join('')}
+      ${isDM ? `<div class="bt-actions">
+          <span class="bt-view" title="You see HP, AC and stat blocks; players see the order only">${ic('eye')} DM view</span>
+          <button class="btn small icon-btn" id="b-prev" data-act="prev" title="Previous turn" aria-label="Previous turn">${ic('skipback')}</button>
+          <button class="btn small primary" id="b-next" data-act="next" title="Next turn (N)">${ic('play')} Next turn <kbd class="bt-kbd">N</kbd></button>
+        </div>` : `<span class="bt-live"><i></i>Live</span>`}
+    </div>
+    ${activeIsMine ? `<div class="your-turn">${ic('swords')} YOUR TURN</div>` : ''}
+    <div class="bt-body">
+      <div class="bt-main">
+        ${isDM ? `<div class="bt-cols" aria-hidden="true"><span class="c-init">Init</span><span class="c-who">Name</span><span class="c-ac">AC</span><span class="c-hp">HP</span><span class="c-cond">Conditions</span><span class="c-conc" title="Concentration">Conc</span></div>` : ''}
+        <div class="bt-list" role="list" aria-label="Turn order">${rows}</div>
+        ${wide ? `<div class="bt-foot"><span><kbd class="bt-kbd">N</kbd> next turn</span><span>Click any number to change it</span>${list.some((x, i) => i && btNum(list[i - 1].init) === btNum(x.init)) ? `<span>${BT_GRIP} drag to reorder ties</span>` : ''}</div>` : ''}
       </div>
-    </div>`;
-  const card = c.querySelector('.bt');
+      ${wide && di >= 0 ? `<aside class="bt-pane">${btDetailHTML(list[di], di, o)}</aside>` : ''}
+    </div>
+  </div></div>`;
+  BT.flash = null;
+  const wrap = c.querySelector('.bt-wrap'), card = wrap.firstElementChild;
+  const redraw = w => btDraw(c, enc, chars, isDM, w);
+  btFit(card);
   if (BT.ro) BT.ro.disconnect();
-  if (window.ResizeObserver) { BT.ro = new ResizeObserver(([e]) => card.classList.toggle('bt-narrow', e.contentRect.width < BT_NARROW)); BT.ro.observe(card); }
-  // long stat text: one line; a tap/click shows all of it (the tooltip has it too)
-  c.querySelectorAll('[data-notes]').forEach(n => n.onclick = e => { e.stopPropagation(); n.classList.toggle('open'); });
+  if (window.ResizeObserver) {
+    BT.ro = new ResizeObserver(() => {
+      cancelAnimationFrame(BT.raf);
+      BT.raf = requestAnimationFrame(() => {
+        if (!wrap.isConnected) return;
+        const w = wrap.clientWidth;
+        if (w && isDM && (Math.min(w, 960) >= BT_WIDE) !== wide) redraw(w); else btFit(card);
+      });
+    });
+    BT.ro.observe(wrap);
+  }
+  if (BT.refocus) { const el = c.querySelector(BT.refocus); BT.refocus = null; if (el) el.focus({ preventScroll: true }); }
   if (!isDM) return;
-  const saveEnc = () => api('/api/encounter', { method: 'PUT', body: enc });
-  const rowOf = i => c.querySelector(`.bt-row[data-row="${i}"]`);
-  // touch / narrow: tapping a row selects it, which shows its ± steppers
-  c.querySelectorAll('.bt-row').forEach(r => r.addEventListener('click', e => {
-    if (e.target.closest('button, input, a')) return;
-    const k = btKey(combatants[Number(r.dataset.row)], Number(r.dataset.row));
-    BT.sel = BT.sel === k ? null : k;
-    c.querySelectorAll('.bt-row.sel').forEach(x => x !== r && x.classList.remove('sel'));
-    r.classList.toggle('sel', BT.sel === k);
-  }));
-  c.querySelectorAll('[data-hp]').forEach(b => b.onclick = async () => {
-    const i = Number(b.dataset.i), x = combatants[i];
-    x.hp = Math.max(0, Number(x.hp || 0) + Number(b.dataset.hp));
-    BT.sel = btKey(x, i);
-    const chip = rowOf(i) && rowOf(i).querySelector('.bt-hp'); if (chip) btPaintHp(chip, x); // instant feedback, then save
-    await saveEnc(); refresh(c);
-  });
-  c.querySelectorAll('[data-hpedit]').forEach(btn => btn.onclick = () => {
-    const i = Number(btn.dataset.hpedit), x = combatants[i], h = btHp(x);
-    const inp = document.createElement('input');
-    inp.className = 'bt-hp-in'; inp.value = h.known ? String(h.hp) : ''; inp.placeholder = h.max ? `/${h.max}` : 'HP';
-    inp.setAttribute('aria-label', `Set HP for ${x.name || 'combatant'}: a number, current/max, or −7 / +5`);
-    inp.autocomplete = 'off'; inp.spellcheck = false; inp.enterKeyHint = 'done';
-    btn.replaceWith(inp); inp.focus(); inp.select();
-    let done = false;
-    const finish = async commit => {
-      if (done) return; done = true;
-      const v = inp.value.trim().replace(/[−–]/g, '-');
-      let m;
-      if (commit && v && v !== String(h.hp)) {
-        if ((m = v.match(/^([+-])\s*(\d+)$/))) x.hp = Math.max(0, Number(x.hp || 0) + (m[1] === '-' ? -1 : 1) * Number(m[2]));
-        else if ((m = v.match(/^(\d+)\s*\/\s*(\d+)$/))) { x.hp = Number(m[1]); x.maxHp = Number(m[2]); }
-        else if ((m = v.match(/^\d+$/))) { x.hp = Number(v); if (!(Number(x.maxHp) > 0)) x.maxHp = x.hp; }
-        else { done = false; toast('Type a number: 12, 12/30, −7 or +5'); inp.select(); return; }
-        inp.replaceWith(btn); btPaintHp(btn, x);
-        await saveEnc(); refresh(c); return;
+
+  // ----- DM controls (one delegated handler per draw) -----
+  const commit = () => { redraw(); btQueueSave(c, enc); };
+  // put focus back on the same control after the redraw, if focus was in the tracker
+  const keep = t => {
+    if (!card.contains(document.activeElement) && document.activeElement !== t) return;
+    const scope = t.closest('.bt-detail') ? '.bt-detail ' : t.closest('.bt-row') ? '.bt-row ' : '';
+    BT.refocus = t.id ? '#' + t.id : scope + ['act', 'k', 'd'].filter(a => t.dataset[a] != null).map(a => `[data-${a}="${CSS.escape(t.dataset[a])}"]`).join('');
+  };
+  const select = k => {
+    BT.sel = !wide && k === detailKey ? '' : k === keys[turn] ? null : k; // narrow: tapping the open row closes it
+    if (card.contains(document.activeElement)) BT.refocus = `.bt-row[data-k="${CSS.escape(k)}"]`;
+    redraw();
+  };
+  const turnBy = dir => {
+    const was = keys[turn];
+    let t = turn + dir;
+    if (t >= n) { t = 0; enc.round = (btNum(enc.round) || 1) + 1; }
+    else if (t < 0) { t = n - 1; enc.round = Math.max(1, (btNum(enc.round) || 1) - 1); }
+    enc.turn = t;
+    if (wide || BT.sel === was) BT.sel = null; // the details follow the turn unless the DM is looking at someone else
+    commit();
+  };
+  const moveTie = (k, dir) => {
+    const i = idx(k), j = i + dir;
+    if (i < 0 || j < 0 || j >= n || btNum(list[j].init) !== btNum(list[i].init)) return;
+    const act = list[turn];
+    [list[i], list[j]] = [list[j], list[i]];
+    enc.turn = list.indexOf(act);
+    BT.refocus = `.bt-grip[data-k="${CSS.escape(k)}"]`;
+    commit();
+  };
+  const edit = async (t, x, k, kind) => {
+    keep(t);
+    const h = btHp(x);
+    const opts = {
+      hp: { value: h.known ? String(h.hp) : '', placeholder: h.max ? `/${h.max}` : '12/30', label: `HP for ${x.name || 'combatant'}: a number, current/max, or −7 / +5`,
+        parse: v => {
+          let mm;
+          if (!v) return false;
+          if ((mm = v.match(/^([+-])\s*(\d+)$/))) x.hp = Math.max(0, btNum(x.hp) + (mm[1] === '-' ? -1 : 1) * Number(mm[2]));
+          else if ((mm = v.match(/^(\d+)\s*\/\s*(\d+)$/))) { x.hp = Number(mm[1]); x.maxHp = Number(mm[2]); }
+          else if (/^\d+$/.test(v)) { x.hp = Number(v); if (!(btNum(x.maxHp) > 0)) x.maxHp = x.hp; }
+          else return 'Type a number: 12, 12/30, −7 or +5';
+          return true;
+        } },
+      init: { value: String(x.init ?? 0), label: `Initiative for ${x.name || 'combatant'}`,
+        parse: v => { if (!/^-?\d{1,3}$/.test(v)) return 'Initiative is a whole number, like 14'; x.init = Number(v); return true; } },
+      ac: { value: String(btAc(x, charOf(x), btMon(x)) ?? ''), label: `AC for ${x.name || 'combatant'}`,
+        parse: v => { if (!v) { if (x.ac == null) return false; delete x.ac; return true; } if (!/^\d{1,2}$/.test(v)) return 'AC is a whole number, like 15'; x.ac = Number(v); return true; } }
+    }[kind];
+    if (!(await btEdit(t, opts))) { BT.refocus = null; return; }
+    if (kind === 'init') { btSortEnc(enc, [x]); BT.flash = k; }
+    commit();
+  };
+  card.addEventListener('click', e => {
+    const t = e.target.closest('[data-act]');
+    if (!t || !card.contains(t)) { const row = e.target.closest('.bt-row'); if (row && row.dataset.k) select(row.dataset.k); return; }
+    const k = t.dataset.k, i = idx(k), x = list[i];
+    switch (t.dataset.act) {
+      case 'next': keep(t); return turnBy(1);
+      case 'prev': keep(t); return turnBy(-1);
+      case 'hp': case 'init': case 'ac': return x && edit(t, x, k, t.dataset.act);
+      case 'hpd': keep(t); x.hp = Math.max(0, btNum(x.hp) + Number(t.dataset.d)); return commit();
+      case 'conc': keep(t); if (x.conc) delete x.conc; else x.conc = true; return commit();
+      case 'uncond': {
+        const rest = btConds(x).filter(cn => cn !== t.dataset.c);
+        if (rest.length) x.conditions = rest; else delete x.conditions;
+        BT.refocus = `.bt-detail [data-act="cond"][data-k="${CSS.escape(k)}"]`;
+        return commit();
       }
-      inp.replaceWith(btn); btn.focus();
+      case 'cond': {
+        const inPane = !!t.closest('.bt-detail');
+        return btCondMenu(t, x, () => { if (S.cache.encounter === enc) redraw(); }, changed => {
+          // if a live update redrew the tracker while the menu was open, apply the change to that newer copy
+          const cur = S.cache.encounter;
+          if (changed && cur && cur !== enc && cur.combatants) {
+            const y = cur.combatants.find(z => btKey(z) === btKey(x));
+            if (y) { if (x.conditions) y.conditions = [...x.conditions]; else delete y.conditions; btQueueSave(c, cur); refresh(c); }
+          } else if (changed) btQueueSave(c, enc);
+          const back = c.querySelector(`${inPane ? '.bt-detail' : '.bt-row'} [data-act="cond"][data-k="${CSS.escape(k)}"]`);
+          if (back) back.focus({ preventScroll: true });
+        });
+      }
+      case 'sheet': S.tab = 'party'; S.view = 'char:' + t.dataset.id; localStorage.setItem('gc_tab', 'party'); return render();
+      case 'remove':
+        if (!t.classList.contains('armed')) {
+          t.classList.add('armed'); t.querySelector('span').textContent = 'Click again to remove';
+          setTimeout(() => { if (t.isConnected) { t.classList.remove('armed'); t.querySelector('span').textContent = 'Remove'; } }, 3500);
+          return;
+        }
+        btRemove(enc, i); BT.sel = null; commit(); toast(`${x.name || 'Combatant'} removed from the fight`);
+    }
+  });
+  card.addEventListener('keydown', e => {
+    const g = e.target.closest && e.target.closest('.bt-grip');
+    if (g && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); moveTie(g.dataset.k, e.key === 'ArrowUp' ? -1 : 1); return; }
+    if (!e.target.classList || !e.target.classList.contains('bt-row')) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(e.target.dataset.k); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const rows = [...card.querySelectorAll('.bt-row')], j = rows.indexOf(e.target) + (e.key === 'ArrowDown' ? 1 : -1);
+      if (rows[j]) rows[j].focus();
+    }
+  });
+  // drag a tied row (by its grip) up or down among the rows with the same initiative
+  card.addEventListener('pointerdown', e => {
+    const g = e.target.closest('.bt-grip');
+    if (!g || e.button !== 0) return;
+    e.preventDefault();
+    card.querySelectorAll('.bt-xrow').forEach(xr => xr.remove());
+    const row = g.closest('.bt-row'), k = row.dataset.k, i0 = idx(k), init = btNum(list[i0].init);
+    let a = i0, b = i0;
+    while (a > 0 && btNum(list[a - 1].init) === init) a--;
+    while (b < n - 1 && btNum(list[b + 1].init) === init) b++;
+    const els = keys.slice(a, b + 1).map(kk => card.querySelector(`.bt-row[data-k="${CSS.escape(kk)}"]`));
+    const rects = els.map(el => el.getBoundingClientRect()), from = i0 - a, hgt = rects[from].height, y0 = e.clientY;
+    let to = from;
+    g.setPointerCapture(e.pointerId);
+    row.classList.add('bt-dragging'); card.classList.add('bt-sorting');
+    const move = ev => {
+      const dy = Math.max(rects[0].top - rects[from].top, Math.min(rects[rects.length - 1].bottom - rects[from].bottom, ev.clientY - y0));
+      const mid = rects[from].top + hgt / 2 + dy;
+      to = rects.filter((r, j) => j !== from && r.top + r.height / 2 < mid).length;
+      els.forEach((el, j) => {
+        if (j === from) el.style.transform = `translateY(${dy}px)`;
+        else el.style.transform = from < to && j > from && j <= to ? `translateY(${-hgt}px)` : from > to && j >= to && j < from ? `translateY(${hgt}px)` : '';
+      });
     };
-    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); } });
-    inp.addEventListener('blur', () => finish(true));
+    const up = () => {
+      g.removeEventListener('pointermove', move); g.removeEventListener('pointerup', up); g.removeEventListener('pointercancel', up);
+      if (to === from) { els.forEach(el => { el.style.transform = ''; }); row.classList.remove('bt-dragging'); card.classList.remove('bt-sorting'); redraw(); return; }
+      const act = list[turn];
+      const [moved] = list.splice(a + from, 1);
+      list.splice(a + to, 0, moved);
+      enc.turn = list.indexOf(act);
+      BT.flash = k;
+      commit();
+    };
+    g.addEventListener('pointermove', move); g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
   });
-  c.querySelectorAll('[data-stat]').forEach(b => b.onclick = () => {
-    const i = Number(b.dataset.stat), k = btKey(combatants[i], i);
-    const sb = c.querySelector(`[data-statblock="${i}"]`); if (!sb) return;
-    const open = sb.classList.toggle('hidden') === false;
-    if (open) BT.open.add(k); else BT.open.delete(k);
-    b.classList.toggle('on', open); b.setAttribute('aria-expanded', String(open));
-  });
-  $('#b-next').onclick = async () => { const len = combatants.length; enc.turn = ((enc.turn || 0) + 1) % len; if (enc.turn === 0) enc.round = (enc.round || 1) + 1; await saveEnc(); refresh(c); };
-  $('#b-prev').onclick = async () => { const len = combatants.length; enc.turn = ((enc.turn || 0) - 1 + len) % len; await saveEnc(); refresh(c); };
 }
 
 // ---------- DICE ----------
@@ -1404,7 +1748,8 @@ async function renderDM(c) {
       <div class="card">${history.map(h => `<div class="hist">${new Date(h.ts).toLocaleString()} — <b>${esc(h.user)}</b> · ${esc(h.entity)} · <b>${esc(h.field)}</b></div>`).join('') || '<p class="muted">No activity yet.</p>'}</div>
     </details>
   `;
-  // --- encounter ---
+  // --- encounter (kept in turn order, like the Battle tab: adding, removing or changing initiative re-sorts) ---
+  btSortEnc(enc);
   const body = $('#enc-body');
   const drawEnc = () => {
     if ((enc.turn || 0) >= (enc.combatants || []).length) enc.turn = 0;
@@ -1418,24 +1763,25 @@ async function renderDM(c) {
     body.querySelectorAll('input').forEach(inp => inp.onchange = () => {
       const x = enc.combatants[Number(inp.dataset.i)];
       x[inp.dataset.e] = ['init', 'hp', 'maxHp'].includes(inp.dataset.e) ? Number(inp.value) || 0 : inp.value;
+      if (inp.dataset.e === 'init') { btSortEnc(enc, [x]); drawEnc(); }
       saveEnc();
     });
-    body.querySelectorAll('[data-e-del]').forEach(b => b.onclick = () => { enc.combatants.splice(Number(b.dataset.eDel), 1); drawEnc(); saveEnc(); });
+    body.querySelectorAll('[data-e-del]').forEach(b => b.onclick = () => { btRemove(enc, Number(b.dataset.eDel)); $('#enc-round').textContent = enc.round || 1; drawEnc(); saveEnc(); });
   };
-  const saveEnc = () => api('/api/encounter', { method: 'PUT', body: enc });
+  const saveEnc = () => btSave(enc);
+  const addEnc = added => { enc.combatants.push(...added); btSortEnc(enc, added); drawEnc(); saveEnc(); };
   drawEnc();
-  $('#enc-add').onclick = () => { enc.combatants.push({ init: 0, name: '', hp: 0, maxHp: 0, notes: '' }); drawEnc(); saveEnc(); };
-  $('#enc-party').onclick = () => {
-    for (const ch of chars) enc.combatants.push({ init: 0, name: ch.name.split(' ')[0], hp: ch.hpCurrent ?? 0, maxHp: ch.hpMax ?? 0, notes: 'PC', characterId: ch.id });
-    drawEnc(); saveEnc();
-  };
-  $('#enc-sort').onclick = () => { enc.combatants.sort((a, b) => (b.init || 0) - (a.init || 0)); drawEnc(); saveEnc(); };
+  $('#enc-add').onclick = () => addEnc([{ init: 0, name: '', hp: 0, maxHp: 0, notes: '' }]);
+  $('#enc-party').onclick = () => addEnc(chars.map(ch => ({ init: 0, name: ch.name.split(' ')[0], hp: ch.hpCurrent ?? 0, maxHp: ch.hpMax ?? 0, notes: 'PC', characterId: ch.id })));
+  // re-sort from scratch: also resets ties the DM dragged into place
+  $('#enc-sort').onclick = () => { btSortEnc(enc, [], true); drawEnc(); saveEnc(); };
   $('#enc-monster-add').onclick = () => {
     const m = (typeof BESTIARY !== 'undefined' ? BESTIARY : []).find(b => b.id === $('#enc-monster').value);
     if (!m) { toast('Pick a monster first'); return; }
     const n = Math.max(1, Math.min(12, Number($('#enc-monster-n').value) || 1));
-    for (let i = 0; i < n; i++) enc.combatants.push(monsterCombatant(m, enc.combatants));
-    drawEnc(); saveEnc(); toast(`${n} × ${m.name} added — initiative rolled`);
+    const added = [];
+    for (let i = 0; i < n; i++) added.push(monsterCombatant(m, [...enc.combatants, ...added]));
+    addEnc(added); toast(`${n} × ${m.name} added — initiative rolled`);
   };
   $('#enc-next').onclick = () => {
     const len = enc.combatants.length;
