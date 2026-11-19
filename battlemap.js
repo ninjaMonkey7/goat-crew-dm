@@ -60,6 +60,7 @@ const BM_TOOLS = [
 const BM_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 const BM_MOD = BM_MAC ? '⌘' : 'Ctrl ';
 const BM_COLORS = ['#f8fafc', '#f2c15e', '#ef4444', '#22c55e', '#38bdf8', '#a78bfa', '#111827'];
+const BM_COLOR_NAMES = { '#f8fafc': 'White', '#f2c15e': 'Gold', '#ef4444': 'Red', '#22c55e': 'Green', '#38bdf8': 'Blue', '#a78bfa': 'Violet', '#111827': 'Black' };
 const BM_TPL_COLORS = [['#f97316', 'Fire'], ['#38bdf8', 'Frost'], ['#84cc16', 'Acid'], ['#a78bfa', 'Arcane'], ['#facc15', 'Radiant'], ['#94a3b8', 'Force']];
 const BM_WIDTHS = { thin: 0.035, med: 0.07, thick: 0.14 }; // fraction of a grid square
 // the map runs under every panel; these keep what matters out from under them (strip, rail, bottom bar)
@@ -210,7 +211,8 @@ async function bmTurn(dir) {
   await save('encounter', e => {
     const n = (e.combatants || []).length; if (!n) return e;
     if (dir > 0) { e.turn = ((e.turn || 0) + 1) % n; if (e.turn === 0) e.round = (e.round || 1) + 1; }
-    else e.turn = ((e.turn || 0) - 1 + n) % n;
+    else if ((e.turn || 0) > 0) e.turn -= 1;
+    else if ((e.round || 1) > 1) { e.turn = n - 1; e.round -= 1; } // back across the round boundary
     return e;
   }, `${S.me.name}: encounter round ${(RAW.encounter && RAW.encounter.round) || 1}`);
   bmEncChanged();
@@ -351,14 +353,14 @@ function bmShellHTML() {
       <button class="bm-app-btn bm-glass" id="bm-app" aria-haspopup="true" aria-expanded="false" aria-label="All tabs" data-tip="All tabs · theme · pin a panel">${ic('apps')}<span>Battle map</span>${ic('chevdown', 'bm-chev')}</button>
       <button class="bm-fs-btn bm-glass" id="bm-fs" aria-label="Full screen" data-tip="Full screen" data-key="\\">${ic('maximize')}</button>
     </div>
-    <div class="bm-init bm-glass hidden" id="bm-init" aria-label="Initiative"></div>
+    <div class="bm-init hidden" id="bm-init" role="group" aria-label="Initiative"></div>
     <div class="bm-tools bm-glass" id="bm-tools" role="toolbar" aria-label="Battle map tools" aria-orientation="vertical"></div>
     <div class="bm-flyout bm-glass hidden" id="bm-flyout"></div>
     <div class="bm-insp bm-glass hidden" id="bm-insp"></div>
     <div class="bm-bottom">
       <div class="bm-bl">
-        <button class="bm-scene bm-glass" id="bm-scene-btn" data-tip="Scenes">${ic('layers')}<span id="bm-scene-name">No scene</span>${ic('chevup', 'bm-chev')}</button>
-        <button class="bm-cast bm-glass" id="bm-cast" aria-label="Player display (TV)" data-tip="Player display (TV)">${ic('cast')}<span>Display</span><i class="bm-dot" id="bm-cast-dot"></i>${ic('chevup', 'bm-chev')}</button>
+        <button class="bm-scene bm-glass" id="bm-scene-btn" aria-haspopup="true" data-tip="Scenes">${ic('layers')}<span id="bm-scene-name">No scene</span>${ic('chevup', 'bm-chev')}</button>
+        <button class="bm-cast bm-glass" id="bm-cast" aria-haspopup="true" aria-label="Player display: off" data-tip="Player display is off · click to cast the map to the TV">${ic('cast')}<span class="bm-cast-label">Player display</span><b class="bm-cast-state" id="bm-cast-state"><i></i>Off</b>${ic('chevup', 'bm-chev')}</button>
       </div>
       <div class="bm-tray bm-glass hidden" id="bm-tray"></div>
       <div class="bm-br">
@@ -538,21 +540,21 @@ function bmFlash(text) {
   el.textContent = text; el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
   clearTimeout(bmFlash.t); bmFlash.t = setTimeout(() => el.classList.remove('show'), 1800);
 }
-const bmSeg = (name, opts, cur) => `<div class="bm-seg" role="radiogroup">${opts.map(([v, label, icon]) => `<button role="radio" aria-checked="${v === cur}" class="${v === cur ? 'on' : ''}" data-${name}="${v}" title="${label}">${icon ? ic(icon) : ''}${icon ? '' : `<span>${label}</span>`}</button>`).join('')}</div>`;
+const bmSeg = (name, opts, cur) => `<div class="bm-seg" role="radiogroup">${opts.map(([v, label, icon]) => `<button role="radio" aria-checked="${v === cur}" class="${v === cur ? 'on' : ''}" data-${name}="${v}"${icon ? ` data-tip="${label}" aria-label="${label}"` : ''}>${icon ? ic(icon) : ''}${icon ? '' : `<span>${label}</span>`}</button>`).join('')}</div>`;
 function bmRenderFlyout() {
   const el = $('#bm-flyout'), t = BM.tool, tool = BM_TOOLS.find(x => x.id === t);
   let body = '';
   if (t === 'draw') {
     const col = bmPref('drawColor', BM_COLORS[0]), shape = bmPref('drawShape', 'path'), w = bmPref('drawWidth', 'med');
     body = `<label>Shape</label>${bmSeg('shape', [['path', 'Freehand', 'squiggle'], ['line', 'Line', 'segment'], ['rect', 'Rectangle', 'rect'], ['circle', 'Circle', 'circle']], shape)}
-      <label>Colour</label><div class="bm-swatches">${BM_COLORS.map(c => `<button class="bm-sw ${c === col ? 'on' : ''}" data-color="${c}" style="--c:${c}" aria-label="Colour ${c}"></button>`).join('')}</div>
+      <label>Colour</label><div class="bm-swatches">${BM_COLORS.map(c => `<button class="bm-sw ${c === col ? 'on' : ''}" data-color="${c}" style="--c:${c}" aria-label="${BM_COLOR_NAMES[c] || c}" data-tip="${BM_COLOR_NAMES[c] || c}"></button>`).join('')}</div>
       <label>Stroke</label>${bmSeg('width', [['thin', 'Thin'], ['med', 'Medium'], ['thick', 'Thick']], w)}
       <label class="bm-check"><input type="checkbox" id="bm-fill" ${bmPref('drawFill', false) ? 'checked' : ''}> Fill shapes</label>
       <label class="bm-check"><input type="checkbox" id="bm-dmonly" ${bmPref('drawDm', false) ? 'checked' : ''}> DM only <span class="muted">(not on the TV)</span></label>`;
   } else if (t === 'template') {
     const col = bmPref('tplColor', BM_TPL_COLORS[0][0]), shape = bmPref('tplShape', 'circle');
     body = `<label>Shape</label>${bmSeg('tshape', [['circle', 'Sphere / radius', 'circle'], ['cone', 'Cone', 'cone'], ['line', 'Line', 'beam'], ['cube', 'Cube', 'cube']], shape)}
-      <label>Effect</label><div class="bm-swatches">${BM_TPL_COLORS.map(([c, n]) => `<button class="bm-sw ${c === col ? 'on' : ''}" data-tcolor="${c}" style="--c:${c}" title="${n}" aria-label="${n}"></button>`).join('')}</div>
+      <label>Effect</label><div class="bm-swatches">${BM_TPL_COLORS.map(([c, n]) => `<button class="bm-sw ${c === col ? 'on' : ''}" data-tcolor="${c}" style="--c:${c}" data-tip="${n}" aria-label="${n}"></button>`).join('')}</div>
       <label>Size when clicked</label><div class="bm-row"><input type="number" id="bm-tpl-ft" min="5" max="300" step="5" value="${bmPref('tplFt', 20)}"><span class="muted">ft</span></div>
       <p class="bm-note">Drag from the point of origin to size and aim. Select a template to move it or drag its handle to rotate · <span class="kbd">[</span> <span class="kbd">]</span> turn 15°.</p>`;
   } else if (t === 'fog') {
@@ -603,8 +605,11 @@ function bmRenderSceneChip() {
   const sc = bmScene(), n = $('#bm-scene-name'); if (!n) return;
   n.textContent = sc ? sc.name || 'Untitled scene' : 'No scene';
   const onTv = sc && BM.doc.display.sceneId === sc.id;
-  $('#bm-scene-btn').classList.toggle('ontv', !!onTv);
-  $('#bm-scene-btn').dataset.tip = onTv ? 'Scenes · this one is on the TV' : 'Scenes';
+  const b = $('#bm-scene-btn');
+  b.classList.toggle('ontv', !!onTv);
+  b.dataset.tip = !sc ? 'Scenes' : onTv ? 'Scenes · this one is on the TV' : 'Scenes · the TV is showing a different scene';
+  b.setAttribute('aria-label', sc ? `Scene: ${n.textContent}${onTv ? ' (on the TV)' : ''}` : 'Scenes');
+  bmCastTip();
 }
 function bmRenderZoom() {
   const el = $('#bm-zoom'), sc = bmScene(); if (!el || !BM.view) return;
@@ -614,14 +619,33 @@ function bmRenderZoom() {
   const html = `<button class="bm-ib" data-z="out" aria-label="Zoom out" data-tip="Zoom out" data-key="−">${ic('minus')}</button>
     <button class="bm-zpct" data-z="fit" aria-label="Fit to the action" data-tip="Fit to the action · Shift-click: whole map" data-key="0">${Math.round(BM.view.cam.z * 100)}%</button>
     <button class="bm-ib" data-z="in" aria-label="Zoom in" data-tip="Zoom in" data-key="+">${ic('plus')}</button>
-    <span class="bm-scale" title="Scale: one square is 5 feet"><i style="width:${bar}px"></i>${cells * 5} ft</span>`;
+    <span class="bm-scale" data-tip="Scale bar · one square is 5 feet"><i style="width:${bar}px"></i>${cells * 5} ft</span>`;
   if (el.dataset.k !== html) { el.innerHTML = html; el.dataset.k = html; el.querySelectorAll('[data-z]').forEach(b => b.onclick = e => b.dataset.z === 'fit' ? bmFit(true, e.shiftKey) : bmZoomBy(b.dataset.z === 'in' ? 1.35 : 1 / 1.35)); }
 }
+const BM_FOLLOW = {
+  dm: ['Follow my view', 'video', 'The TV mirrors what you are looking at, cropped to what the players can see.'],
+  fit: ['Fit the revealed area', 'scan', 'The TV frames everything the players can see, centred.'],
+  turn: ['Follow the active token', 'locate', 'The TV keeps whoever is acting comfortably in frame, and glides to the next one each turn.'],
+  locked: ['Locked', 'lock', 'The TV holds the view you locked, whatever you do here.']
+};
+// the bottom-bar chip: "Player display  On / Off", with what the TV is doing in its tooltip
 function bmRenderCastDot() {
-  const d = $('#bm-cast-dot'); if (!d) return;
+  const b = $('#bm-cast'), st = $('#bm-cast-state'); if (!b || !st) return;
   const live = Date.now() - BM.displaySeen < 7000;
-  d.classList.toggle('live', live);
-  const b = $('#bm-cast'); if (b) b.dataset.tip = live ? 'Player display · connected' : 'Player display · not open';
+  if (b.classList.contains('live') !== live || !st.dataset.k) {
+    st.dataset.k = '1';
+    b.classList.toggle('live', live);
+    st.innerHTML = `<i></i>${live ? 'On' : 'Off'}`;
+    b.setAttribute('aria-label', `Player display: ${live ? 'on' : 'off'}`);
+  }
+  bmCastTip();
+}
+function bmCastTip() {
+  const b = $('#bm-cast'); if (!b || !BM.doc) return;
+  const d = BM.doc.display, sc = d.sceneId && bmScene(d.sceneId), mode = (BM_FOLLOW[d.follow] || BM_FOLLOW.dm)[0];
+  b.dataset.tip = b.classList.contains('live')
+    ? `Player display is on${sc ? ` · showing ${sc.name || 'a scene'}` : ''} · camera: ${mode.toLowerCase()}`
+    : 'Player display is off · click to cast the map to the TV';
 }
 
 // initiative strip: round · whose turn · who is next · next turn
@@ -639,11 +663,15 @@ function bmRenderInit() {
   const hp = c => { const h = hpOf(c); return h ? `<span class="bm-init-hp ${h.hp <= 0 ? 'down' : h.hp <= h.max / 2 ? 'low' : ''}">${h.hp}<i>/${h.max}</i></span>` : ''; };
   const curDown = (hpOf(cur) || {}).hp <= 0;
   const nm = c => `${esc(bsBaseName(c.name) || c.name || '—')}${bsNumber(c.name) ? ` <i>${bsNumber(c.name)}</i>` : ''}`;
-  el.innerHTML = `<div class="bm-round" title="Round ${enc.round || 1}"><small>Round</small><b>${enc.round || 1}</b></div>
-    <button class="bm-ib bm-prev" id="bm-prev" aria-label="Previous turn" data-tip="Previous turn">${ic('skipback')}</button>
-    <button class="bm-init-cur ${curDown ? 'down' : ''}" data-cid="${esc(cur.id || '')}" data-tip="Centre on ${esc(cur.name)}"><canvas data-disc="${turn}"></canvas><span><small>${curDown ? 'Down' : 'Now acting'}</small><b>${esc(cur.name || '—')}</b></span>${hp(cur)}</button>
-    ${next.length ? `<div class="bm-init-next" aria-label="Up next"><small>Up next</small><div class="bm-init-row">${next.map((c, i) => `<button class="bm-init-up ${(hpOf(c) || {}).hp <= 0 ? 'down' : ''}" style="--i:${i}" data-cid="${esc(c.id || '')}" data-tip="Centre on ${esc(c.name)}"><canvas data-disc="${list.indexOf(c)}"></canvas><b>${nm(c)}</b></button>`).join('')}</div></div>` : ''}
-    <button class="bm-next" id="bm-next" aria-label="Next turn" data-tip="Next turn" data-key="N"><span>Next</span>${ic('skipfwd')}</button>`;
+  // back a turn: across a round boundary too, but not before the first turn of round 1
+  const round = enc.round || 1, canBack = turn > 0 || round > 1, prevC = list[(turn - 1 + list.length) % list.length];
+  const backTip = canBack ? `Previous turn · back to ${prevC.name || '—'}${turn === 0 ? ` (round ${round - 1})` : ''}` : 'Previous turn · this is the first turn of the fight';
+  const upNext = next[0] ? next[0].name : '';
+  el.innerHTML = `<div class="bm-round" data-tip="Round ${round} · a round ends when everyone has acted"><small>Round</small><b>${round}</b></div>
+    <button class="bm-ib bm-prev" id="bm-prev" aria-label="${esc(backTip)}" data-tip="${esc(backTip)}" ${canBack ? '' : 'disabled'}>${ic('skipback')}</button>
+    <button class="bm-init-cur ${curDown ? 'down' : ''}" data-cid="${esc(cur.id || '')}" data-tip="Centre the map on ${esc(cur.name)}"><canvas data-disc="${turn}"></canvas><span><small>${curDown ? 'Down' : 'Now acting'}</small><b>${esc(cur.name || '—')}</b></span>${hp(cur)}</button>
+    ${next.length ? `<div class="bm-init-next" role="group" aria-label="Up next"><small>Up next</small><div class="bm-init-row">${next.map((c, i) => `<button class="bm-init-up ${(hpOf(c) || {}).hp <= 0 ? 'down' : ''}" style="--i:${i}" data-cid="${esc(c.id || '')}" data-tip="${i ? `In ${i + 1} turns` : 'Next'}: ${esc(c.name)} · click to centre the map"><canvas data-disc="${list.indexOf(c)}"></canvas><b>${nm(c)}</b></button>`).join('')}</div></div>` : ''}
+    <button class="bm-next" id="bm-next" aria-label="Next turn${upNext ? `: ${esc(upNext)}` : ''}" data-tip="End ${esc(cur.name || 'this')}'s turn${upNext ? ` · ${esc(upNext)} is next` : ''}" data-key="N"><span>Next</span>${ic('skipfwd')}</button>`;
   el.classList.remove('hidden');
   el.querySelectorAll('canvas[data-disc]').forEach(cv => {
     const c = list[Number(cv.dataset.disc)], isCur = !!cv.closest('.bm-init-cur'), info = bsCombatantInfo(c, RAW.characters, null);
@@ -652,7 +680,7 @@ function bmRenderInit() {
     bmFaceDisc(cv, info, isCur ? 40 : 26, isCur ? '#F2B544' : null);
   });
   $('#bm-next').onclick = () => bmTurn(1);
-  $('#bm-prev').onclick = () => bmTurn(-1);
+  $('#bm-prev').onclick = () => { if (canBack) bmTurn(-1); };
   el.querySelectorAll('[data-cid]').forEach(b => b.onclick = () => {
     const t = bmScene().tokens.find(x => x.combatantId && x.combatantId === b.dataset.cid);
     if (t) { BM.view.sel = new Set([t.id]); BM.view.selDrawing = null; bmCenterOn(t.x, t.y); bmRenderInspector(); BM.view.request(); }
@@ -691,8 +719,8 @@ function bmRenderTray() {
   const sig = JSON.stringify([todo.map(x => [x.i, x.c.name, x.c.hp, x.c.characterId, x.c.monster]), (enc.combatants || []).length]);
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
-  el.innerHTML = `<div class="bm-tray-head"><small>To place</small>${todo.length > 1 ? `<button class="bm-tray-all" id="bm-add-all" title="Place every combatant on the map">${ic('userplus')}<span>Add all</span><b>${todo.length}</b></button>` : '<span class="bm-tray-tip">Drag onto the map</span>'}</div>
-    <div class="bm-tray-list">${todo.map(x => `<button class="bm-tray-item" data-i="${x.i}" title="${esc(x.c.name)} · drag onto the map, or click to place"><canvas></canvas><span>${esc(bsBaseName(x.c.name) || '—')}${bsNumber(x.c.name) ? ` <i>${bsNumber(x.c.name)}</i>` : ''}</span></button>`).join('')}</div>`;
+  el.innerHTML = `<div class="bm-tray-head"><small>To place</small>${todo.length > 1 ? `<button class="bm-tray-all" id="bm-add-all" data-tip="Place every combatant on the map">${ic('userplus')}<span>Add all</span><b>${todo.length}</b></button>` : '<span class="bm-tray-tip">Drag onto the map</span>'}</div>
+    <div class="bm-tray-list">${todo.map(x => `<button class="bm-tray-item" data-i="${x.i}" aria-label="Place ${esc(x.c.name)}" data-tip="${esc(x.c.name)} · drag onto the map, or click to place"><canvas></canvas><span>${esc(bsBaseName(x.c.name) || '—')}${bsNumber(x.c.name) ? ` <i>${bsNumber(x.c.name)}</i>` : ''}</span></button>`).join('')}</div>`;
   el.querySelectorAll('.bm-tray-item').forEach(b => {
     const x = todo.find(y => y.i === Number(b.dataset.i));
     bsDisc(b.querySelector('canvas'), bsCombatantInfo(x.c, RAW.characters, null), 36);
@@ -792,9 +820,9 @@ function bmRenderInspector(soft) {
     const cols = isT ? BM_TPL_COLORS.map(x => x[0]) : BM_COLORS;
     el.innerHTML = `<div class="bm-insp-head"><span class="bm-insp-icon" style="--c:${d.color}">${ic(isT ? { circle: 'circle', cone: 'cone', line: 'beam', cube: 'cube' }[d.shape] : { path: 'squiggle', line: 'segment', rect: 'rect', circle: 'circle' }[d.type])}</span>
       <div><b>${isT ? `${g.ft} ft ${BS_TPL_NAMES[d.shape]}` : { path: 'Freehand', line: 'Line', rect: 'Rectangle', circle: 'Circle' }[d.type]}</b><small>${isT ? 'Spell template' : d.dmOnly ? 'Drawing · DM only' : 'Drawing'}</small></div>
-      <button class="bm-ib" id="bm-insp-x" aria-label="Deselect">${ic('x')}</button></div>
-      <div class="bm-swatches">${cols.map(c => `<button class="bm-sw ${c === d.color ? 'on' : ''}" data-icolor="${c}" style="--c:${c}" aria-label="Colour"></button>`).join('')}</div>
-      ${isT ? `<div class="bm-row"><button class="btn small" data-rot="-15" title="Rotate left ([)">↺ 15°</button><button class="btn small" data-rot="15" title="Rotate right (])">↻ 15°</button></div>` : `<label class="bm-check"><input type="checkbox" id="bm-i-dm" ${d.dmOnly ? 'checked' : ''}> DM only</label>`}
+      <button class="bm-ib" id="bm-insp-x" aria-label="Deselect" data-tip="Deselect" data-key="Esc">${ic('x')}</button></div>
+      <div class="bm-swatches">${cols.map(c => `<button class="bm-sw ${c === d.color ? 'on' : ''}" data-icolor="${c}" style="--c:${c}" aria-label="${isT ? (BM_TPL_COLORS.find(x => x[0] === c) || [, c])[1] : BM_COLOR_NAMES[c] || c}" data-tip="${isT ? (BM_TPL_COLORS.find(x => x[0] === c) || [, c])[1] : BM_COLOR_NAMES[c] || c}"></button>`).join('')}</div>
+      ${isT ? `<div class="bm-row"><button class="btn small" data-rot="-15" data-tip="Rotate left" data-key="[">↺ 15°</button><button class="btn small" data-rot="15" data-tip="Rotate right" data-key="]">↻ 15°</button></div>` : `<label class="bm-check"><input type="checkbox" id="bm-i-dm" ${d.dmOnly ? 'checked' : ''}> DM only</label>`}
       <div class="bm-row bm-insp-foot"><button class="btn small danger" id="bm-i-del">${ic('trash')} Delete <span class="kbd">Del</span></button></div>`;
     el.querySelectorAll('[data-icolor]').forEach(b => b.onclick = () => bmRecolorSelected(b.dataset.icolor));
     el.querySelectorAll('[data-rot]').forEach(b => b.onclick = () => bmRotateTpl(Number(b.dataset.rot)));
@@ -812,18 +840,18 @@ function bmRenderInspector(soft) {
   const linkOpts = one ? `<option value="">— not linked —</option>${(enc.combatants || []).map((x, i) => `<option value="${i}" ${c && x.id === c.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}` : '';
   el.innerHTML = `<div class="bm-insp-head">${one ? '<canvas id="bm-insp-disc"></canvas>' : `<span class="bm-insp-count">${toks.length}</span>`}
       <div class="bm-grow">${one ? `<input id="bm-i-name" value="${esc(one.name)}" aria-label="Token name" spellcheck="false">` : `<b>${toks.length} tokens</b>`}<small>${one ? `${BS_KINDS[one.kind || 'neutral'].label} · ${(BS_SIZES.find(s => s[0] === (one.size || 1)) || BS_SIZES[1])[1]}${one.hidden ? ' · hidden' : ''}` : 'Shift-click to add or remove'}</small></div>
-      <button class="bm-ib" id="bm-insp-x" aria-label="Deselect" title="Deselect (Esc)">${ic('x')}</button></div>
+      <button class="bm-ib" id="bm-insp-x" aria-label="Deselect" data-tip="Deselect" data-key="Esc">${ic('x')}</button></div>
     ${info && info.hp ? `<div class="bm-hp ${info.down ? 'down' : info.bloodied ? 'low' : ''}">
         <div class="bm-hp-top"><span>${ic('heart')} HP</span><input id="bm-i-hp" inputmode="numeric" value="${info.hp.hp}" aria-label="Hit points"><span class="muted">/ ${info.hp.max}</span>${info.down ? '<span class="bm-tag red">Down</span>' : info.bloodied ? '<span class="bm-tag">Bloodied</span>' : ''}</div>
         <div class="bm-hp-bar"><i style="width:${Math.round(100 * bsClamp(info.hp.hp / info.hp.max, 0, 1))}%"></i></div>
         <div class="bm-hp-btns">${[-5, -1, 1, 5].map(n => `<button class="btn small" data-hp="${n}">${n > 0 ? '+' : '−'}${Math.abs(n)}</button>`).join('')}</div></div>` : ''}
     <label>Side</label><div class="bm-seg bm-kinds">${Object.entries(BS_KINDS).map(([k, x]) => `<button class="${kind === k ? 'on' : ''}" data-kind="${k}" style="--c:${x.ring}"><i></i>${x.label}</button>`).join('')}</div>
-    <label>Size</label><div class="bm-seg">${BS_SIZES.map(([n, name, s]) => `<button class="${size === n ? 'on' : ''}" data-size="${n}" title="${name}">${s}</button>`).join('')}</div>
+    <label>Size</label><div class="bm-seg">${BS_SIZES.map(([n, name, s]) => `<button class="${size === n ? 'on' : ''}" data-size="${n}" data-tip="${name}" aria-label="${name}">${s}</button>`).join('')}</div>
     ${one ? `<label>Initiative link</label><select id="bm-i-link">${linkOpts}</select>` : ''}
     <label class="bm-switch"><input type="checkbox" id="bm-i-hidden" ${hidden ? 'checked' : ''}><span></span> Hidden from players</label>
     <div class="bm-row bm-insp-foot">
-      ${one ? `<button class="btn small" id="bm-i-img" title="Use an image for this token">${ic('image')} Image</button><button class="btn small" id="bm-i-center" title="Centre the view on it">${ic('locate')}</button>` : ''}
-      <button class="btn small danger" id="bm-i-del" title="Remove from the map (Delete)">${ic('trash')} Remove</button></div>`;
+      ${one ? `<button class="btn small" id="bm-i-img" data-tip="Use an image for this token">${ic('image')} Image</button><button class="btn small" id="bm-i-center" aria-label="Centre the map on it" data-tip="Centre the map on it">${ic('locate')}</button>` : ''}
+      <button class="btn small danger" id="bm-i-del" data-tip="Remove from the map" data-key="Del">${ic('trash')} Remove</button></div>`;
   if (one) bsDisc($('#bm-insp-disc'), info, 44);
   const patchAll = (label, fields) => bmCommit(label, toks.map(t => ({ coll: 'tokens', id: t.id, before: Object.fromEntries(Object.keys(fields).map(k => [k, t[k] ?? null])), after: fields, patch: true })));
   el.querySelectorAll('[data-kind]').forEach(b => b.onclick = () => patchAll('Change side', { kind: b.dataset.kind }));
@@ -952,7 +980,7 @@ function bmOpenScenes() {
     <div class="bm-scene-list">${d.scenes.map(s => `<button class="bm-scene-row ${s.id === cur ? 'on' : ''}" data-sid="${s.id}"><span class="bm-scene-thumb" data-thumb="${s.id}"></span><span class="bm-grow">${esc(s.name || 'Untitled')}</span>${d.display.sceneId === s.id ? `<span class="bm-tag tv">${ic('cast')} TV</span>` : ''}${s.id === cur ? ic('check') : ''}</button>`).join('') || '<p class="muted" style="margin:6px 4px">No scenes yet.</p>'}</div>
     <div class="bm-pop-actions">
       <button class="btn small" id="bm-sc-new">${ic('plus')} New scene</button>
-      ${cur ? `<button class="btn small" id="bm-sc-tv" ${d.display.sceneId === cur ? 'disabled' : ''}>${ic('cast')} Show on TV</button>
+      ${cur ? `<button class="btn small" id="bm-sc-tv" ${d.display.sceneId === cur ? 'disabled data-tip="This scene is already on the TV"' : 'data-tip="Switch the TV to this scene"'}>${ic(d.display.sceneId === cur ? 'check' : 'cast')} ${d.display.sceneId === cur ? 'On the TV' : 'Show on TV'}</button>
       <button class="btn small" id="bm-sc-ren">${ic('pencil')} Rename</button>
       <button class="btn small danger" id="bm-sc-del">${ic('trash')} Delete</button>` : ''}
     </div>`, 'bm-pop-scenes');
@@ -1010,11 +1038,13 @@ function bmNewSceneHTML(hero) {
       <div class="bm-ns-card">
         <div class="bm-ns-ico">${ic('grid')}</div><b>Blank grid</b>
         <div class="bm-row bm-ns-dims"><input type="number" id="bm-ns-cols" min="4" max="80" value="24" aria-label="Columns"><span>×</span><input type="number" id="bm-ns-rows" min="4" max="80" value="16" aria-label="Rows"><span class="muted">squares</span></div>
-        <div class="bm-ns-floors">${Object.entries(BS_FLOORS).map(([k, label], i) => `<button class="bm-ns-floor ${i === 0 ? 'on' : ''}" data-floor="${k}" title="${label}"><canvas data-fprev="${k}"></canvas><span>${label}</span></button>`).join('')}</div>
+        <div class="bm-ns-floors" role="radiogroup" aria-label="Floor">${bmFloorKeys().map((k, i) => `<button role="radio" aria-checked="${i === 0}" class="bm-ns-floor ${i === 0 ? 'on' : ''}" data-floor="${k}" data-tip="${esc(BS_FLOORS[k])}"><canvas data-fprev="${k}"></canvas><span>${esc(BS_FLOORS[k])}</span></button>`).join('')}</div>
         <button class="btn primary small" id="bm-ns-blank">Create grid</button>
       </div>
     </div>`;
 }
+// blank-scene floors: the renderer's dungeon (rooms and walls) first and preselected when it has one
+function bmFloorKeys() { const keys = Object.keys(typeof BS_FLOORS === 'object' && BS_FLOORS ? BS_FLOORS : {}); return keys.includes('dungeon') ? ['dungeon', ...keys.filter(k => k !== 'dungeon')] : keys; }
 function bmWireNewScene(root) {
   const q = s => root.querySelector(s), name = () => (q('#bm-ns-name').value || '').trim().slice(0, 80) || 'Untitled scene';
   const up = q('#bm-ns-upload');
@@ -1029,16 +1059,21 @@ function bmWireNewScene(root) {
     const size = Math.max(24, Math.round(Math.max(m.width, m.height) / 40));
     bmCreateScene({ name: nm, bg: m.path, bgSize: { w: m.width, h: m.height }, grid: { size, offsetX: 0, offsetY: 0, show: false, opacity: 0.4 } });
   });
-  let floor = 'flagstone';
-  root.querySelectorAll('[data-floor]').forEach(b => b.onclick = () => { floor = b.dataset.floor; root.querySelectorAll('[data-floor]').forEach(x => x.classList.toggle('on', x === b)); });
+  let floor = bmFloorKeys()[0] || 'flagstone';
+  root.querySelectorAll('[data-floor]').forEach(b => b.onclick = () => { floor = b.dataset.floor; root.querySelectorAll('[data-floor]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); }); });
   root.querySelectorAll('[data-fprev]').forEach(cv => {
-    const fake = { id: 'preview-' + cv.dataset.fprev, floor: cv.dataset.fprev, cols: 4, rows: 3, grid: { size: 60 } };
-    const src = bsFloor(fake).mips[0]; cv.width = 120; cv.height = 90; const x = cv.getContext('2d'); x.drawImage(src, 0, 0, 120, 90);
-    x.strokeStyle = 'rgba(0,0,0,.4)'; x.lineWidth = 1; x.beginPath(); for (let i = 1; i < 4; i++) { x.moveTo(i * 30 + 0.5, 0); x.lineTo(i * 30 + 0.5, 90); } for (let i = 1; i < 3; i++) { x.moveTo(0, i * 30 + 0.5); x.lineTo(120, i * 30 + 0.5); } x.stroke();
+    // a dungeon needs room to show its rooms and walls; the textures read best close up
+    const k = cv.dataset.fprev, n = k === 'dungeon' ? 2 : 1, cols = 4 * n, rows = 3 * n, step = 30 / n;
+    cv.width = 120; cv.height = 90;
+    try {
+      const fake = { id: 'preview-' + k, floor: k, cols, rows, grid: { size: 60 } };
+      const src = bsFloor(fake).mips[0], x = cv.getContext('2d'); x.drawImage(src, 0, 0, 120, 90);
+      x.strokeStyle = 'rgba(0,0,0,.4)'; x.lineWidth = 1; x.beginPath(); for (let i = 1; i < cols; i++) { x.moveTo(Math.round(i * step) + 0.5, 0); x.lineTo(Math.round(i * step) + 0.5, 90); } for (let i = 1; i < rows; i++) { x.moveTo(0, Math.round(i * step) + 0.5); x.lineTo(120, Math.round(i * step) + 0.5); } x.stroke();
+    } catch (e) { console.warn('floor preview', k, e); }
   });
   q('#bm-ns-blank').onclick = () => {
     const cols = bsClamp(Math.round(Number(q('#bm-ns-cols').value) || 24), 4, 80), rows = bsClamp(Math.round(Number(q('#bm-ns-rows').value) || 16), 4, 80);
-    bmCreateScene({ name: name(), bg: null, floor, cols, rows, grid: { size: 100, offsetX: 0, offsetY: 0, show: true, opacity: floor === 'flagstone' ? 0.3 : 0.55 } });
+    bmCreateScene({ name: name(), bg: null, floor, cols, rows, grid: { size: 100, offsetX: 0, offsetY: 0, show: true, opacity: floor === 'flagstone' || floor === 'dungeon' ? 0.3 : 0.55 } });
   };
   if (q('#bm-ns-x')) q('#bm-ns-x').onclick = () => bmClosePop();
 }
@@ -1115,20 +1150,22 @@ function bmCommitGrid() {
 function bmOpenDisplayPop() {
   const d = BM.doc.display, sc = bmScene(), live = Date.now() - BM.displaySeen < 7000;
   const onTv = d.sceneId && bmScene(d.sceneId);
-  const p = bmOpenPop('display', `<div class="bm-pop-head"><b>${ic('cast')} Player display</b><span class="bm-tag ${live ? 'ok' : ''}">${live ? 'Connected' : 'Not open'}</span></div>
+  const follow = BM_FOLLOW[d.follow] ? d.follow : 'dm';
+  const p = bmOpenPop('display', `<div class="bm-pop-head"><b>${ic('cast')} Player display</b><span class="bm-tag ${live ? 'ok' : 'off'}">${live ? 'On' : 'Off'}</span></div>
     <button class="btn primary bm-wide" id="bm-d-open">${ic('cast')} ${live ? 'Bring the display forward' : 'Cast to the TV'}</button>
-    <p class="bm-note">Opens a full-screen window for the second screen. It updates instantly from this tab.</p>
+    <p class="bm-note">${live ? 'The TV window is open and updates instantly from this tab.' : 'Opens a full-screen window for the second screen. It updates instantly from this tab.'}</p>
     <label>On the TV</label>
     <div class="bm-row"><span class="bm-grow bm-ellipsis">${onTv ? esc(onTv.name) : '<span class="muted">Nothing yet</span>'}</span>${sc && d.sceneId !== sc.id ? `<button class="btn small" id="bm-d-this">Show this scene</button>` : ''}</div>
     <label>TV camera</label>
-    <div class="bm-radios">${[['dm', 'Follow my view', 'video'], ['fit', 'Fit the revealed area', 'scan'], ['locked', 'Locked', 'lock']].map(([k, label, icn]) => `<button class="bm-radio ${d.follow === k ? 'on' : ''}" data-follow="${k}">${ic(icn)}<span>${label}</span></button>`).join('')}</div>
+    <div class="bm-radios" role="radiogroup" aria-label="TV camera">${Object.entries(BM_FOLLOW).map(([k, [label, icn]]) => `<button role="radio" aria-checked="${follow === k}" class="bm-radio ${follow === k ? 'on' : ''}" data-follow="${k}">${ic(icn)}<span>${label}</span>${follow === k ? ic('check', 'bm-radio-tick') : ''}</button>`).join('')}</div>
+    <p class="bm-note">${BM_FOLLOW[follow][2]}</p>
     <button class="btn small bm-wide" id="bm-d-lock">${ic('lock')} Lock the TV to my current view</button>
     <label class="bm-switch"><input type="checkbox" id="bm-d-init" ${d.showInit !== false ? 'checked' : ''}><span></span> Initiative ribbon on the TV</label>`, 'bm-pop-display');
   bmAnchorPop(p, $('#bm-cast'));
   const setD = (k, v, label) => bmCommit(label, [{ coll: 'display', id: k, before: BM.doc.display[k], after: v }], { undo: false });
   p.querySelector('#bm-d-open').onclick = () => { bmClosePop(); bmOpenDisplay(); };
   if (p.querySelector('#bm-d-this')) p.querySelector('#bm-d-this').onclick = () => { bmShowOnTv(sc.id); bmOpenDisplayPop(); };
-  p.querySelectorAll('[data-follow]').forEach(b => b.onclick = () => { setD('follow', b.dataset.follow, 'Display camera'); bmOpenDisplayPop(); });
+  p.querySelectorAll('[data-follow]').forEach(b => b.onclick = () => { if (b.dataset.follow !== BM.doc.display.follow) setD('follow', b.dataset.follow, 'Display camera'); bmOpenDisplayPop(); bmCastTip(); });
   p.querySelector('#bm-d-lock').onclick = () => { if (!sc) return; setD('camera', { sceneId: sc.id, ...bmVisibleRect() }, 'Lock display camera'); setD('follow', 'locked', 'Display camera'); bmFlash('TV locked to this view'); bmOpenDisplayPop(); };
   p.querySelector('#bm-d-init').onchange = e => setD('showInit', e.target.checked, 'Display initiative');
 }
@@ -1138,7 +1175,7 @@ function bmOpenNewToken() {
     <label>Name</label><input id="bm-t-name" placeholder="Cart, Statue, Mysterious stranger…" maxlength="60" spellcheck="false">
     <label>Or a party member</label><select id="bm-t-char"><option value="">—</option>${chars.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>
     <label>Side</label><div class="bm-seg bm-kinds">${Object.entries(BS_KINDS).map(([k, x]) => `<button class="${k === 'neutral' ? 'on' : ''}" data-tkind="${k}" style="--c:${x.ring}"><i></i>${x.label}</button>`).join('')}</div>
-    <label>Size</label><div class="bm-seg">${BS_SIZES.map(([n, name, s]) => `<button class="${n === 1 ? 'on' : ''}" data-tsize="${n}" title="${name}">${s}</button>`).join('')}</div>
+    <label>Size</label><div class="bm-seg">${BS_SIZES.map(([n, name, s]) => `<button class="${n === 1 ? 'on' : ''}" data-tsize="${n}" data-tip="${name}" aria-label="${name}">${s}</button>`).join('')}</div>
     <div class="bm-row bm-insp-foot"><button class="btn primary small" id="bm-t-add">Place token</button></div>`, 'bm-pop-token');
   bmAnchorPop(p, $('#bm-add-tok'), 'left');
   let kind = 'neutral', size = 1;
