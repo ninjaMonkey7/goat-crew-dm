@@ -113,10 +113,10 @@
             <option value="">Pin a panel…</option>
             <option value="chat">DM Chat</option>
             <option value="notes">My Notes</option>
-            <option value="battle">Battle</option>
+            <option value="battle">Initiative</option>
             <option value="dice">Dice</option>
             <option value="party">Party</option>
-            <option value="map">Map</option>
+            <option value="map">World map</option>
           </select>
         </div>
         <button id="sync" class="sync" type="button" data-state="wait" aria-label="Connecting"><span id="live-dot" aria-hidden="true"></span><span class="sync-lbl" id="sync-lbl">Connecting…</span></button>
@@ -138,11 +138,15 @@
       <div class="nav-body">
         <div class="nav-group" data-group="play" role="group" aria-labelledby="ng-play">
           <div class="nav-label" id="ng-play"><span>Play</span></div>
-          <button data-tab="map" class="tab">Map</button>
-          <button data-tab="battle" class="tab">Battle</button>
-          <button data-tab="battlemap" class="tab">Battle map</button>
+          <button data-tab="map" class="tab">World map</button>
           <button data-tab="party" class="tab">Party</button>
           <button data-tab="dice" class="tab">Dice</button>
+        </div>
+        <!-- one encounter, two views: the turn order and the map of the fight (the top bar switches between them) -->
+        <div class="nav-group" data-group="encounter" role="group" aria-labelledby="ng-encounter">
+          <div class="nav-label" id="ng-encounter"><span>Encounter</span></div>
+          <button data-tab="battle" class="tab">Initiative</button>
+          <button data-tab="battlemap" class="tab">Battle map</button>
         </div>
         <div class="nav-group" data-group="story" role="group" aria-labelledby="ng-story">
           <div class="nav-label" id="ng-story"><span>Story</span></div>
@@ -153,10 +157,10 @@
           <button data-tab="notes" class="tab">My Notes</button>
         </div>
         <div class="nav-group" data-group="dm" role="group" aria-labelledby="ng-dm">
-          <div class="nav-label" id="ng-dm" title="Only DMs see this group"><span>DM</span><span class="ic-slot" data-ic="eyeoff"></span></div>
+          <div class="nav-label" id="ng-dm"><span>DM only</span><span class="nav-hint" data-tip="Hidden from players"><span class="ic-slot" data-ic="eyeoff"></span><span class="sr-only">, hidden from players</span></span></div>
           <button data-tab="chat" class="tab">DM Chat</button>
           <button data-tab="arc" class="tab dm-only hidden">Arc</button>
-          <button data-tab="dm" class="tab dm-only hidden" title="Encounter tracker, session prep, users, activity">Prep &amp; tools</button>
+          <button data-tab="dm" class="tab dm-only hidden" title="Encounter builder, session prep, users and the activity log">Prep &amp; tools</button>
         </div>
         <div class="nav-group" data-group="admin" role="group" aria-labelledby="ng-admin">
           <div class="nav-label" id="ng-admin"><span>Admin</span></div>

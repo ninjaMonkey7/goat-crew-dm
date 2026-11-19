@@ -184,7 +184,9 @@ $('#logout').onclick = async () => { await api('/api/logout', { method: 'POST' }
 // ---------- main shell ----------
 /* Layout (style.css): a grouped sidebar (nav#tabs) that collapses to an icon rail on wide screens and is a drawer
    under 900px, a top bar (header: page title, pin a panel, sync status, account menu), the page, and an optional
-   pinned panel (#rail). Ids other code relies on: #whoami, #live-dot, #logout, #pin-pick, #theme-toggle, .tab[data-tab]. */
+   pinned panel (#rail). Ids other code relies on: #whoami, #live-dot, #logout, #pin-pick, #theme-toggle, .tab[data-tab].
+   Sidebar groups: Play (World map, Party, Dice), Encounter (Initiative = data-tab "battle", Battle map = "battlemap": two
+   views of one fight, with a switch between them in the top bar), Story, DM (hidden from players), Admin. */
 // shell icons (Lucide, ISC) that icons.js doesn't have
 Object.entries({
   navmenu: '<line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" />',
@@ -194,7 +196,10 @@ Object.entries({
   okcircle: '<circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" />',
   alert: '<circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" />',
   spinner: '<path d="M21 12a9 9 0 1 1-6.219-8.56" />',
-  help: '<circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" />'
+  help: '<circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" />',
+  arrowup: '<path d="m5 12 7-7 7 7" /><path d="M12 19V5" />',
+  chevleft: '<path d="m15 18-6-6 6-6" />',
+  chevright: '<path d="m9 18 6-6-6-6" />'
 }).forEach(([k, v]) => { if (!ICONS[k]) ICONS[k] = v; });
 $$('#main [data-ic]').forEach(el => { el.outerHTML = ic(el.dataset.ic, el.className.replace(/\bic-slot\b/, '').trim()); });
 
@@ -265,8 +270,12 @@ bindMenu($('#pin-btn'), $('#pin-menu'), menu => {
     (S.pin ? `<div class="pop-sep" role="separator"></div><button class="pop-item" type="button" role="menuitem" data-pin="">${ic('x')}<span>Unpin panel</span></button>` : '');
   menu.querySelectorAll('[data-pin]').forEach(b => b.onclick = () => { pick.value = b.dataset.pin; pick.dispatchEvent(new Event('change')); });
 });
+/* Settings and Admin are about this browser and these people, not the game: no pinned panel there (it comes back on the next page) */
+const PIN_OFF = new Set(['settings', 'admin']);
+const pinOffered = () => $$('#pin-pick option').some(o => o.value && !o.hidden);
 function paintPin() {
   const btn = $('#pin-btn'), on = !!(S.pin && RAIL_TABS[S.pin]);
+  btn.closest('.tb-menu-wrap').classList.toggle('hidden', PIN_OFF.has(S.tab) || !pinOffered());
   $('#pin-lbl').textContent = on ? RAIL_TABS[S.pin] : 'Pin panel';
   btn.classList.toggle('on', on);
   btn.dataset.tip = on ? `${RAIL_TABS[S.pin]} is pinned beside every page` : 'Pin a panel beside every page';
@@ -348,7 +357,6 @@ function showMain() {
   $$('#tabs .tab').forEach(t => t.classList.toggle('hidden', t.dataset.tab !== 'settings' && !tabs.has(t.dataset.tab)));
   $$('#tabs .nav-group').forEach(g => g.classList.toggle('hidden', !g.querySelector('.tab:not(.hidden)')));
   $$('#pin-pick option').forEach(o => { if (o.value) o.hidden = !tabs.has(o.value); });
-  $('#pin-btn').closest('.tb-menu-wrap').classList.toggle('hidden', !$$('#pin-pick option').some(o => o.value && !o.hidden));
   if (S.pin && !tabs.has(S.pin)) { S.pin = ''; localStorage.removeItem('gc_pin'); }
   S.tab = localStorage.getItem('gc_tab') || (isStaff(S.me) ? 'map' : 'party');
   if (S.tab !== 'settings' && !tabs.has(S.tab)) S.tab = ['party', 'map'].find(t => tabs.has(t)) || [...tabs][0] || 'settings';
@@ -365,7 +373,9 @@ $$('#tabs .tab').forEach(b => b.onclick = () => {
 $('#pin-pick').onchange = e => setPin(e.target.value);
 const TAB_ICONS = { map: 'map', chat: 'chat', party: 'users', battle: 'swords', battlemap: 'grid', dice: 'dice', journal: 'book', codex: 'scroll', quests: 'flag', board: 'pin', arc: 'route', notes: 'notebook', dm: 'crown', admin: 'shield', settings: 'settings' };
 $$('#tabs .tab').forEach(b => { const n = TAB_ICONS[b.dataset.tab], label = b.textContent.trim(); if (n) b.innerHTML = ic(n) + `<span>${esc(label)}</span>`; b.dataset.tip = label; });
-// Keyboard: N = next turn when the Battle panel is showing, / = jump to the DM chat box, [ = collapse / expand the sidebar,
+// the sidebar names the pages; the access lists (gh.js TAB_DEFS, shown on People & access) use the same names
+if (typeof TAB_DEFS !== 'undefined') TAB_DEFS.forEach(d => { const b = $(`#tabs .tab[data-tab="${d.id}"]`); if (b) d.label = b.textContent.trim(); });
+// Keyboard: N = next turn when Initiative is showing, / = jump to the DM chat box, [ = collapse / expand the sidebar,
 // Esc = close the menu drawer or the map side panel, or leave a field
 document.addEventListener('keydown', e => {
   const tag = (e.target && e.target.tagName || '').toUpperCase();
@@ -411,10 +421,32 @@ async function renderInto(c, tab) {
     else if (tab === 'admin') await renderAdmin(c);
   } catch (e) { c.innerHTML = `<p class="err">Failed to load: ${esc(e.message)}</p>`; }
 }
+/* Page titles: every root page is titled in the top bar and nowhere else. A page's own top heading that repeats the
+   title (e.g. "People & access") stays in the page for screen readers but isn't shown (.pg-dup). The two encounter
+   views share one title, "Encounter", with an Initiative | Battle map switch beside it. The DM's battle map is
+   full-bleed and hides the top bar: there, the map's own app menu lists the same sidebar pages, Initiative included. */
+const ENCOUNTER_VIEWS = ['battle', 'battlemap'];
+const tabOpen = t => { const b = $(`#tabs .tab[data-tab="${t}"]`); return !!b && !b.classList.contains('hidden'); };
+function paintTitle() {
+  const tb = $('#tb-title'), views = ENCOUNTER_VIEWS.filter(tabOpen);
+  if (views.length > 1 && views.includes(S.tab)) {
+    tb.innerHTML = `<span class="tb-crumb">${ic('swords')}<span>Encounter</span></span>
+      <div class="tb-seg" role="group" aria-label="Encounter view">${views.map(t => `<button type="button" data-go="${t}"${t === S.tab ? ' aria-current="page"' : ''}>${esc(navLabel(t))}</button>`).join('')}</div>`;
+    tb.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { if (b.dataset.go !== S.tab) $(`#tabs .tab[data-tab="${b.dataset.go}"]`).click(); });
+  } else tb.innerHTML = `${ic(TAB_ICONS[S.tab] || 'pin')}<span>${esc(navLabel(S.tab))}</span>`;
+}
+const TITLE_ALIASES = { board: ['Noticeboard'], dm: ['Dungeon Master'] }; // older page headings that name the same page
+const normTitle = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+function dedupePageTitle() {
+  const h = $('#content').querySelector('h1, h2');
+  if (!h || h.classList.contains('pg-dup') || h.closest('.md, .card, [role="dialog"]')) return;
+  if ([navLabel(S.tab), ...(TITLE_ALIASES[S.tab] || [])].map(normTitle).includes(normTitle(h.textContent))) h.classList.add('pg-dup');
+}
+new MutationObserver(dedupePageTitle).observe($('#content'), { childList: true }); // pages that re-render themselves too
 async function renderOnce() {
   $$('#tabs .tab').forEach(b => { const on = b.dataset.tab === S.tab; b.classList.toggle('active', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   const label = navLabel(S.tab);
-  $('#tb-title').innerHTML = `${ic(TAB_ICONS[S.tab] || 'pin')}<span>${esc(label)}</span>`;
+  paintTitle();
   document.title = `${label} · Goat Crew`;
   document.body.classList.toggle('tab-map', S.tab === 'map');
   document.body.classList.toggle('tab-battlemap', S.tab === 'battlemap');
@@ -425,10 +457,10 @@ async function renderOnce() {
 
 /* ---------- right rail: one pinned panel that stays open beside whatever tab is active ----------
    Only panels whose element ids don't clash with the other tabs are offered. */
-const RAIL_TABS = { chat: 'DM Chat', notes: 'My Notes', battle: 'Battle', dice: 'Dice', party: 'Party', map: 'Map' };
+const RAIL_TABS = { chat: 'DM Chat', notes: 'My Notes', battle: 'Initiative', dice: 'Dice', party: 'Party', map: 'World map' };
 async function syncRail(force) {
   const rail = $('#rail');
-  const show = !!(S.pin && RAIL_TABS[S.pin] && S.pin !== S.tab);
+  const show = !!(S.pin && RAIL_TABS[S.pin] && S.pin !== S.tab && !PIN_OFF.has(S.tab));
   document.body.classList.toggle('has-rail', show);
   rail.classList.toggle('hidden', !show);
   const pick = $('#pin-pick');
