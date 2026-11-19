@@ -31,7 +31,7 @@ async function renderAdmin(c) {
       ${d.tokenMode ? `<div class="adm-banner">
         <b>${ic('lock')} Roles aren't enforced yet.</b>
         <span>Right now everyone signs in with a GitHub token, which can read everything, so players can't have their own logins. Set up the login server
-        (Settings → Login server, about 15 minutes) to turn on passwords, sign-in links, resets and real player access. Until then you can still set names, roles and characters here.</span>
+        (Settings → Advanced → Sign-in service, about 15 minutes) to turn on passwords, sign-in links, resets and real player access. Until then you can still set names, roles and characters here.</span>
       </div>` : ''}
       <div class="adm-stats">
         <div><b>${count('admin')}</b><span>Admin${count('admin') === 1 ? '' : 's'}</span></div>
