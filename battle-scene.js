@@ -1,7 +1,11 @@
 /* battle-scene.js — the battle map renderer, shared by the DM's Battle map tab (battlemap.js) and the
    player display window (display.js). Canvas 2D. Scene coordinates are pixels of the map; the camera
    maps them to the screen as  screen = scene * z + (x, y). Pure drawing and geometry: no saving here.
-   Needs media() from gh.js for images in the private data branch. */
+   Needs media() from gh.js for images in the private data branch.
+
+   Frame order: floor (cached bitmap) → grid overlay → templates → drawings → tokens → fog (cached,
+   feathered mask) → labels (GM) → live overlays. Everything expensive (floors, fog, token art, shadows)
+   is built once into offscreen canvases, so a pan or a drag only composites. */
 'use strict';
 
 const BS_TAU = Math.PI * 2;
@@ -10,7 +14,7 @@ const BS_KINDS = {
   pc: { label: 'PC', ring: '#f2c15e' },
   ally: { label: 'Ally', ring: '#4ade80' },
   foe: { label: 'Foe', ring: '#f05252' },
-  neutral: { label: 'Neutral', ring: '#a7b1c6' }
+  neutral: { label: 'Neutral', ring: '#e8943a' }
 };
 // [cells, name, short]
 const BS_SIZES = [[0.5, 'Tiny', 'T'], [1, 'Medium', 'M'], [2, 'Large', 'L'], [3, 'Huge', 'H'], [4, 'Gargantuan', 'G']];
@@ -36,16 +40,18 @@ const BS_EMOJI_WORDS = [[/spider/i, '🕷️'], [/\brats?\b/i, '🐀'], [/wol(f|
   [/cult|priest|acolyte|monk/i, '🕯️'], [/demon|devil|fiend|\bimps?\b/i, '😈'], [/bird|eagle|hawk|raven|crow|owl/i, '🦅'], [/fish|shark/i, '🦈'],
   [/slime|ooze|jelly|pudding/i, '💧'], [/beetle|centipede|insect|worm|crawler/i, '🐛'], [/boar|pig/i, '🐗'], [/chest|crate|barrel|cart/i, '📦'],
   [/fire|flame|elemental/i, '🔥'], [/tree|treant|plant|vine|shrub/i, '🌿'], [/statue|golem|construct/i, '🗿'], [/crab/i, '🦀'], [/frog|toad/i, '🐸']];
-// jewel-tone palettes for generated tokens: [highlight, body, edge]
+// deep, slightly desaturated enamels for generated tokens: [highlight, body, edge]
 const BS_PALETTES = {
-  crimson: ['#ef7a70', '#9e1f2b', '#3a0910'], ember: ['#f4a865', '#b5531f', '#461807'], amber: ['#f7d987', '#b78a2c', '#45300a'],
-  emerald: ['#7fdcaa', '#207951', '#0a2c1c'], teal: ['#7ddad3', '#1c7d84', '#072d31'], sapphire: ['#8ab3f4', '#2b52ad', '#0b183d'],
-  amethyst: ['#cba6f4', '#6c3fa9', '#25113d'], slate: ['#c3cbdc', '#56627b', '#1a202d'], bone: ['#f1e8d2', '#a6977a', '#3d3427'], moss: ['#c2d68a', '#5e7a2a', '#1f2a0b']
+  oxblood: ['#c0655a', '#6a1f22', '#1e0708'], umber: ['#b38658', '#56391f', '#1a1008'], iron: ['#97a1b0', '#3d4552', '#11151b'],
+  moss: ['#9fae68', '#435025', '#141a09'], rust: ['#cc8650', '#73391a', '#230e05'], ash: ['#aca99f', '#4d4a45', '#161513'],
+  sapphire: ['#86a7e6', '#274796', '#0a1535'], teal: ['#78ccc2', '#1b6463', '#062324'], emerald: ['#7dcfa0', '#1f6a47', '#08271a'],
+  amethyst: ['#b99be2', '#58358c', '#1d1033'], garnet: ['#dc8590', '#7d2537', '#2a0a12'], bronze: ['#dcb574', '#80602b', '#2b1d09']
 };
 const BS_KIND_PALETTES = {
-  foe: ['crimson', 'ember', 'amethyst', 'slate', 'moss', 'bone', 'crimson'], pc: ['amber', 'sapphire', 'teal', 'emerald', 'amethyst', 'ember'],
-  ally: ['emerald', 'teal', 'sapphire'], neutral: ['slate', 'bone', 'amber', 'teal']
+  foe: ['oxblood', 'umber', 'iron', 'moss', 'rust', 'ash'], pc: ['sapphire', 'teal', 'emerald', 'amethyst', 'garnet', 'bronze'],
+  ally: ['emerald', 'teal', 'sapphire', 'moss'], neutral: ['iron', 'bronze', 'ash', 'teal']
 };
+const BS_INK = '236,224,200'; // the cream of engraved glyphs and initials
 
 // ---------- small utils ----------
 function bsHash(str) { let h = 2166136261 >>> 0; for (const ch of String(str)) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; } return h; }
@@ -68,10 +74,15 @@ function bsShade(hex, amt) {
 // a ring that reads as polished metal: light from the top left
 function bsRingStyle(x, cx, cy, r, col) {
   const g = x.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
-  g.addColorStop(0, bsShade(col, 0.5)); g.addColorStop(0.45, col); g.addColorStop(1, bsShade(col, -0.42));
+  g.addColorStop(0, bsShade(col, 0.55)); g.addColorStop(0.42, col); g.addColorStop(1, bsShade(col, -0.45));
   return g;
 }
 const bsEase = t => 1 - Math.pow(1 - bsClamp(t, 0, 1), 3);
+function bsErfc(z) {
+  const t = 1 / (1 + 0.5 * Math.abs(z));
+  const y = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+  return z >= 0 ? y : 2 - y;
+}
 
 // ---------- scene geometry ----------
 function bsGrid(sc) { const g = (sc && sc.grid) || {}; return { size: Math.max(8, Number(g.size) || 70), offsetX: Number(g.offsetX) || 0, offsetY: Number(g.offsetY) || 0, show: g.show !== false, opacity: g.opacity == null ? 0.5 : Number(g.opacity) }; }
@@ -93,6 +104,7 @@ function bsFeet(sc, a, b, rule) {
   if (rule === 'euclid') return 5 * Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / s);
   return 5 * Math.max(dx, dy);
 }
+// the disc fills ~92% of its footprint
 function bsTokenRadius(sc, t) { return Math.max(0.5, Number(t.size) || 1) * bsGrid(sc).size / 2 * 0.92; }
 function bsPointInPoly(x, y, pts) {
   let inside = false;
@@ -143,6 +155,14 @@ function bsTplCells(sc, g) {
     if (bsTplContains(g, cx, cy, -0.001)) out.push([gr.offsetX + c * s, gr.offsetY + r * s]);
   }
   return out;
+}
+// affected squares are only recomputed when the template or the grid changes, not every frame
+const BS_TPL_CELLS = new Map();
+function bsTplCellsCached(sc, d, g) {
+  const gr = bsGrid(sc), key = `${d.shape}|${d.pts[0]}|${d.pts[1]}|${gr.size}|${gr.offsetX}|${gr.offsetY}`;
+  let v = BS_TPL_CELLS.get(key);
+  if (!v) { v = bsTplCells(sc, g); if (BS_TPL_CELLS.size > 200) BS_TPL_CELLS.clear(); BS_TPL_CELLS.set(key, v); }
+  return v;
 }
 
 // ---------- token identity ----------
@@ -201,9 +221,19 @@ function bsMips(src) {
   }
   return out;
 }
+// mean luminance 0..1 of an image or canvas (null if the browser will not let us read it)
+function bsLuma(src) {
+  try {
+    const c = bsCanvas(16, 16), x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(src, 0, 0, 16, 16);
+    const d = x.getImageData(0, 0, 16, 16).data; let s = 0;
+    for (let i = 0; i < d.length; i += 4) s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+    return s / (256 * 255);
+  } catch (_) { return null; }
+}
 
-// ---------- procedural floors for blank scenes ----------
+// ---------- noise ----------
 let BS_NOISE = null;
+// fine white-noise grain (256², tiles)
 function bsNoise() {
   if (BS_NOISE) return BS_NOISE;
   const n = 256, c = bsCanvas(n, n), x = c.getContext('2d'), d = x.createImageData(n, n), r = bsRng(11);
@@ -211,161 +241,365 @@ function bsNoise() {
   x.putImageData(d, 0, 0);
   return (BS_NOISE = c);
 }
+// soft, tileable value-noise fbm (cloudy mottling for stone, wood and paper)
+const BS_FBM = {};
+function bsFbm(seed = 7, n = 256) {
+  const key = seed + '|' + n; if (BS_FBM[key]) return BS_FBM[key];
+  const r = bsRng(seed * 7919 + 1), acc = new Float32Array(n * n);
+  let amp = 1;
+  for (let g = 4; g <= Math.min(64, n / 2); g *= 2) {
+    const lat = new Float32Array(g * g); for (let i = 0; i < g * g; i++) lat[i] = r();
+    const step = n / g;
+    for (let y = 0; y < n; y++) {
+      const fy = y / step, y0 = Math.floor(fy), ty = fy - y0, sy = ty * ty * (3 - 2 * ty), ya = (y0 % g) * g, yb = ((y0 + 1) % g) * g;
+      for (let x = 0; x < n; x++) {
+        const fx = x / step, x0 = Math.floor(fx), tx = fx - x0, sx = tx * tx * (3 - 2 * tx), xa = x0 % g, xb = (x0 + 1) % g;
+        const a = lat[ya + xa] + (lat[ya + xb] - lat[ya + xa]) * sx, b = lat[yb + xa] + (lat[yb + xb] - lat[yb + xa]) * sx;
+        acc[y * n + x] += (a + (b - a) * sy) * amp;
+      }
+    }
+    amp *= 0.52;
+  }
+  let mn = Infinity, mx = -Infinity; for (let i = 0; i < acc.length; i++) { if (acc[i] < mn) mn = acc[i]; if (acc[i] > mx) mx = acc[i]; }
+  const c = bsCanvas(n, n), x = c.getContext('2d'), d = x.createImageData(n, n);
+  for (let i = 0; i < n * n; i++) { const v = Math.round((acc[i] - mn) / (mx - mn || 1) * 255); d.data[i * 4] = d.data[i * 4 + 1] = d.data[i * 4 + 2] = v; d.data[i * 4 + 3] = 255; }
+  x.putImageData(d, 0, 0);
+  return (BS_FBM[key] = c);
+}
+// tile an image over (0,0,w,h) at a given tile size, blended
+function bsTile(x, img, w, h, size, alpha, op, ox = 0, oy = 0) {
+  x.save(); x.globalAlpha = alpha; x.globalCompositeOperation = op || 'source-over';
+  for (let ty = -oy; ty < h; ty += size) for (let tx = -ox; tx < w; tx += size) x.drawImage(img, tx, ty, size + 0.5, size + 0.5);
+  x.restore();
+}
+function bsVignette(x, w, h, rgba, inner = 0.35, op) {
+  x.save(); if (op) x.globalCompositeOperation = op;
+  const v = x.createRadialGradient(w / 2, h / 2, Math.min(w, h) * inner, w / 2, h / 2, Math.hypot(w, h) * 0.6);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, rgba); x.fillStyle = v; x.fillRect(0, 0, w, h);
+  x.restore();
+}
+function bsBlotches(x, w, h, s, rnd, n, colors, op, size = [1.5, 5]) {
+  x.save(); x.globalCompositeOperation = op || 'source-over';
+  for (let i = 0; i < n; i++) {
+    const cx = rnd() * w, cy = rnd() * h, r = s * (size[0] + rnd() * (size[1] - size[0])), col = colors[Math.floor(rnd() * colors.length)];
+    const gr = x.createRadialGradient(cx, cy, 0, cx, cy, r); gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = gr; x.fillRect(cx - r, cy - r, r * 2, r * 2);
+  }
+  x.restore();
+}
+
+// ---------- procedural floors for blank scenes (built once per scene into a cached bitmap + mips) ----------
 const BS_FLOORS = { flagstone: 'Dungeon flagstones', planks: 'Tavern planks', parchment: 'Parchment' };
 const BS_FLOOR_CACHE = new Map();
 function bsFloor(sc) {
   const { w, h } = bsSceneSize(sc), g = bsGrid(sc), style = BS_FLOORS[sc.floor] ? sc.floor : 'flagstone';
   const key = `${sc.id}|${style}|${w}x${h}|${g.size}|${g.offsetX}|${g.offsetY}`;
   if (BS_FLOOR_CACHE.has(key)) return BS_FLOOR_CACHE.get(key);
-  const k = Math.min(1, 4096 / Math.max(w, h));
+  const k = Math.min(1, 3072 / Math.max(w, h));
   const c = bsCanvas(w * k, h * k), x = c.getContext('2d');
   x.scale(k, k);
   const rnd = bsRng(sc.id + style);
-  if (style === 'planks') bsPlanks(x, w, h, g.size, rnd);
-  else if (style === 'parchment') bsParchment(x, w, h, g.size, rnd);
-  else bsFlagstone(x, w, h, g.size, rnd);
-  const out = { mips: bsMips(c), scale: k };
+  if (style === 'planks') bsPlanks(x, w, h, g.size, rnd, k);
+  else if (style === 'parchment') bsParchment(x, w, h, g.size, rnd, k);
+  else bsFlagstone(x, w, h, g.size, rnd, k);
+  const out = { mips: bsMips(c), scale: k, light: style === 'parchment' };
   if (BS_FLOOR_CACHE.size > 6) BS_FLOOR_CACHE.delete(BS_FLOOR_CACHE.keys().next().value);
   BS_FLOOR_CACHE.set(key, out);
   return out;
 }
-function bsTexture(x, w, h, alpha, op) {
-  x.save(); x.globalCompositeOperation = op || 'overlay'; x.globalAlpha = alpha;
-  x.fillStyle = x.createPattern(bsNoise(), 'repeat'); x.fillRect(0, 0, w, h); x.restore();
+// keep the part of a convex polygon where nx*x + ny*y <= d
+function bsClipHalf(poly, nx, ny, d) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const da = nx * a[0] + ny * a[1] - d, db = nx * b[0] + ny * b[1] - d;
+    if (da <= 0) out.push(a);
+    if ((da <= 0) !== (db <= 0)) { const t = da / (da - db); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); }
+  }
+  return out;
 }
-function bsVignette(x, w, h, rgba) {
-  const v = x.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.hypot(w, h) * 0.62);
-  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, rgba); x.fillStyle = v; x.fillRect(0, 0, w, h);
-}
-function bsBlotches(x, w, h, s, rnd, n, colors, op) {
-  x.save(); x.globalCompositeOperation = op || 'source-over';
+// soften the corners of a polygon (sampled quadratic fillets)
+function bsRoundPoly(poly, rad) {
+  const n = poly.length, out = [];
   for (let i = 0; i < n; i++) {
-    const cx = rnd() * w, cy = rnd() * h, r = s * (1.5 + rnd() * 5), col = colors[Math.floor(rnd() * colors.length)];
-    const gr = x.createRadialGradient(cx, cy, 0, cx, cy, r); gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)');
-    x.fillStyle = gr; x.fillRect(cx - r, cy - r, r * 2, r * 2);
+    const a = poly[i], p = poly[(i + n - 1) % n], q = poly[(i + 1) % n];
+    const la = Math.hypot(p[0] - a[0], p[1] - a[1]) || 1, lb = Math.hypot(q[0] - a[0], q[1] - a[1]) || 1, r = Math.min(rad, la * 0.42, lb * 0.42);
+    const s1 = [a[0] + (p[0] - a[0]) * r / la, a[1] + (p[1] - a[1]) * r / la], s2 = [a[0] + (q[0] - a[0]) * r / lb, a[1] + (q[1] - a[1]) * r / lb];
+    for (let t = 0; t <= 1.001; t += 0.25) { const u = 1 - t; out.push([u * u * s1[0] + 2 * u * t * a[0] + t * t * s2[0], u * u * s1[1] + 2 * u * t * a[1] + t * t * s2[1]]); }
   }
+  return out;
+}
+// worn, hand-cut edges: subdivide and nudge each point along the edge normal
+function bsRoughen(pts, amp, rnd, step) {
+  const out = [], n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    out.push(a);
+    const m = Math.floor(L / step); if (m < 1) continue;
+    const nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;
+    for (let j = 1; j <= m; j++) { const t = j / (m + 1), d = (rnd() - 0.5) * 2 * amp; out.push([a[0] + (b[0] - a[0]) * t + nx * d, a[1] + (b[1] - a[1]) * t + ny * d]); }
+  }
+  return out;
+}
+function bsPolyPath(x, pts) { x.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) x.lineTo(pts[i][0], pts[i][1]); x.closePath(); }
+/* Soft bevel for a raised shape: light catches the top-left inner edge, the bottom-right inner edge
+   falls into shade. Casts shadows from everything *outside* the shape into it (canvas shadows are in
+   device pixels, hence k). Call with the shape already clipped. */
+function bsBevel(x, pts, bb, k, blur, light, dark, off) {
+  const hole = () => { x.beginPath(); x.rect(bb[0] - 400, bb[1] - 400, bb[2] - bb[0] + 800, bb[3] - bb[1] + 800); bsPolyPath(x, pts); };
+  x.save(); x.fillStyle = '#000'; x.shadowBlur = blur * k;
+  if (light) { x.shadowColor = light; x.shadowOffsetX = x.shadowOffsetY = off * k; hole(); x.fill('evenodd'); }
+  if (dark) { x.shadowColor = dark; x.shadowOffsetX = x.shadowOffsetY = -off * 1.15 * k; hole(); x.fill('evenodd'); }
   x.restore();
-}
-function bsFlagstone(x, w, h, s, rnd) {
-  x.fillStyle = '#0f1115'; x.fillRect(0, 0, w, h);
-  const cols = Math.ceil(w / s), rows = Math.ceil(h / s), used = new Uint8Array(cols * rows);
-  const free = (c, r) => c < cols && r < rows && !used[r * cols + c];
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-    if (used[r * cols + c]) continue;
-    let cw = 1, ch = 1; const roll = rnd();
-    if (roll < 0.04 && free(c + 1, r) && free(c, r + 1) && free(c + 1, r + 1)) { cw = 2; ch = 2; }
-    else if (roll < 0.17 && free(c + 1, r)) cw = 2;
-    else if (roll < 0.27 && free(c, r + 1)) ch = 2;
-    for (let i = 0; i < ch; i++) for (let j = 0; j < cw; j++) used[(r + i) * cols + c + j] = 1;
-    bsSlab(x, c * s, r * s, cw * s, ch * s, s, rnd);
-  }
-  bsTexture(x, w, h, 0.32, 'overlay');
-  bsBlotches(x, w, h, s, rnd, Math.round(cols * rows / 14) + 4, ['rgba(10,12,8,.35)', 'rgba(52,66,38,.18)', 'rgba(0,0,0,.28)'], 'multiply');
-  bsVignette(x, w, h, 'rgba(0,0,0,.5)');
-}
-function bsSlab(x, x0, y0, sw, sh, s, rnd) {
-  const gap = s * 0.04, j = () => (rnd() - 0.5) * s * 0.035, rr = s * 0.06;
-  const p = [[x0 + gap + j(), y0 + gap + j()], [x0 + sw - gap + j(), y0 + gap + j()], [x0 + sw - gap + j(), y0 + sh - gap + j()], [x0 + gap + j(), y0 + sh - gap + j()]];
-  const path = () => {
-    x.beginPath();
-    for (let i = 0; i < 4; i++) {
-      const a = p[i], b = p[(i + 1) % 4], pr = p[(i + 3) % 4];
-      const ta = Math.hypot(a[0] - pr[0], a[1] - pr[1]), tb = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      const s1 = [a[0] + (pr[0] - a[0]) * rr / ta, a[1] + (pr[1] - a[1]) * rr / ta], s2 = [a[0] + (b[0] - a[0]) * rr / tb, a[1] + (b[1] - a[1]) * rr / tb];
-      if (i === 0) x.moveTo(s1[0], s1[1]); else x.lineTo(s1[0], s1[1]);
-      x.quadraticCurveTo(a[0], a[1], s2[0], s2[1]);
-    }
-    x.closePath();
-  };
-  const warm = rnd() < 0.12, l = 16 + rnd() * 13, hue = warm ? 30 + rnd() * 10 : 205 + rnd() * 25, sat = warm ? 6 + rnd() * 5 : 4 + rnd() * 6;
-  const gr = x.createLinearGradient(x0, y0, x0 + sw, y0 + sh);
-  gr.addColorStop(0, `hsl(${hue},${sat}%,${l + 6}%)`); gr.addColorStop(1, `hsl(${hue},${sat}%,${l - 4}%)`);
-  path(); x.fillStyle = gr; x.fill();
-  x.save(); path(); x.clip();
-  // worn centre and bevelled edges
-  const cg = x.createRadialGradient(x0 + sw * (0.3 + rnd() * 0.4), y0 + sh * (0.3 + rnd() * 0.4), 0, x0 + sw / 2, y0 + sh / 2, Math.max(sw, sh) * 0.7);
-  cg.addColorStop(0, 'rgba(255,255,255,.05)'); cg.addColorStop(1, 'rgba(0,0,0,.18)'); x.fillStyle = cg; x.fillRect(x0, y0, sw, sh);
-  // stone grain: a patch of the noise tile at a random offset, so neighbours differ
-  x.globalCompositeOperation = 'soft-light'; x.globalAlpha = 0.55;
-  x.drawImage(bsNoise(), rnd() * 128, rnd() * 128, 128, 128, x0, y0, sw, sh);
-  x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1;
-  x.lineWidth = s * 0.08;
-  x.translate(s * 0.022, s * 0.022); path(); x.strokeStyle = 'rgba(255,255,255,.085)'; x.stroke();
-  x.translate(-s * 0.044, -s * 0.044); path(); x.strokeStyle = 'rgba(0,0,0,.5)'; x.stroke();
-  x.translate(s * 0.022, s * 0.022);
-  // chipped edges
-  const chips = 1 + Math.floor(rnd() * 3);
-  for (let i = 0; i < chips; i++) {
-    const side = Math.floor(rnd() * 4), t = 0.15 + rnd() * 0.7;
-    const cx = side === 0 ? x0 + sw * t : side === 1 ? x0 + sw - gap : side === 2 ? x0 + sw * t : x0 + gap;
-    const cy = side === 0 ? y0 + gap : side === 1 ? y0 + sh * t : side === 2 ? y0 + sh - gap : y0 + sh * t;
-    x.beginPath(); x.ellipse(cx, cy, s * (0.03 + rnd() * 0.05), s * (0.02 + rnd() * 0.03), rnd() * Math.PI, 0, BS_TAU);
-    x.fillStyle = 'rgba(8,9,12,.75)'; x.fill();
-  }
-  const pits = Math.round(sw * sh / (s * s) * 14);
-  for (let i = 0; i < pits; i++) {
-    x.beginPath(); x.arc(x0 + rnd() * sw, y0 + rnd() * sh, s * (0.004 + rnd() * 0.012), 0, BS_TAU);
-    x.fillStyle = rnd() < 0.7 ? 'rgba(0,0,0,.3)' : 'rgba(255,255,255,.06)'; x.fill();
-  }
-  if (rnd() < 0.16) {
-    let cx = x0 + sw * (0.1 + rnd() * 0.3), cy = y0 + sh * (0.1 + rnd() * 0.8); const ang = (rnd() - 0.5) * 1.2;
-    x.beginPath(); x.moveTo(cx, cy);
-    for (let i = 0; i < 6; i++) { cx += Math.cos(ang + (rnd() - 0.5) * 1.4) * s * 0.14; cy += Math.sin(ang + (rnd() - 0.5) * 1.4) * s * 0.14; x.lineTo(cx, cy); }
-    x.lineWidth = s * 0.011; x.strokeStyle = 'rgba(0,0,0,.5)'; x.stroke();
-    x.translate(0.6, 0.6); x.strokeStyle = 'rgba(255,255,255,.05)'; x.stroke();
-  }
-  x.restore();
-}
-function bsPlanks(x, w, h, s, rnd) {
-  x.fillStyle = '#140d08'; x.fillRect(0, 0, w, h);
-  const ph = s / 2.5;
-  for (let y = 0; y < h; y += ph) {
-    let xx = -rnd() * s * 3;
-    while (xx < w) { const len = s * (2.2 + rnd() * 3.6); bsPlank(x, xx, y, len, ph, rnd); xx += len; }
-  }
-  bsTexture(x, w, h, 0.22, 'overlay');
-  bsBlotches(x, w, h, s, rnd, Math.round(w * h / (s * s) / 18) + 3, ['rgba(20,10,4,.35)', 'rgba(0,0,0,.25)'], 'multiply');
-  bsVignette(x, w, h, 'rgba(0,0,0,.55)');
-}
-function bsPlank(x, x0, y0, len, ph, rnd) {
-  const hue = 22 + rnd() * 12, sat = 32 + rnd() * 14, l = 19 + rnd() * 10, gap = Math.max(1, ph * 0.045);
-  const gr = x.createLinearGradient(0, y0, 0, y0 + ph);
-  gr.addColorStop(0, `hsl(${hue},${sat}%,${l + 3}%)`); gr.addColorStop(0.5, `hsl(${hue},${sat}%,${l + 5}%)`); gr.addColorStop(1, `hsl(${hue},${sat}%,${l - 5}%)`);
-  x.fillStyle = gr; x.fillRect(x0 + gap, y0 + gap, len - gap * 2, ph - gap * 2);
-  x.save(); x.beginPath(); x.rect(x0 + gap, y0 + gap, len - gap * 2, ph - gap * 2); x.clip();
-  const lines = 7 + Math.floor(rnd() * 7);
-  for (let i = 0; i < lines; i++) {
-    const yy = y0 + ph * (0.1 + rnd() * 0.8), amp = ph * (0.03 + rnd() * 0.08), fr = 2 + rnd() * 4, ph0 = rnd() * BS_TAU;
-    x.beginPath();
-    for (let t = 0; t <= 1.0001; t += 0.05) { const px = x0 + t * len, py = yy + Math.sin(t * fr + ph0) * amp; t === 0 ? x.moveTo(px, py) : x.lineTo(px, py); }
-    x.lineWidth = ph * (0.015 + rnd() * 0.04); x.strokeStyle = `hsla(${hue},${sat}%,${l - 9}%,${0.25 + rnd() * 0.3})`; x.stroke();
-  }
-  if (rnd() < 0.3) {
-    const kx = x0 + len * (0.2 + rnd() * 0.6), ky = y0 + ph * (0.3 + rnd() * 0.4);
-    for (let i = 3; i > 0; i--) { x.beginPath(); x.ellipse(kx, ky, ph * 0.12 * i, ph * 0.06 * i, 0, 0, BS_TAU); x.strokeStyle = `hsla(${hue},${sat}%,${l - 10}%,.45)`; x.lineWidth = ph * 0.02; x.stroke(); }
-  }
-  x.restore();
-  for (const nx of [x0 + ph * 0.35, x0 + len - ph * 0.35]) for (const ny of [y0 + ph * 0.3, y0 + ph * 0.7]) {
-    x.beginPath(); x.arc(nx, ny, ph * 0.045, 0, BS_TAU); x.fillStyle = 'rgba(0,0,0,.6)'; x.fill();
-    x.beginPath(); x.arc(nx - ph * 0.01, ny - ph * 0.01, ph * 0.02, 0, BS_TAU); x.fillStyle = 'rgba(255,230,200,.12)'; x.fill();
-  }
-}
-function bsParchment(x, w, h, s, rnd) {
-  x.fillStyle = '#d9c49b'; x.fillRect(0, 0, w, h);
-  bsBlotches(x, w, h, s, rnd, Math.round(w * h / (s * s) / 6) + 8, ['rgba(160,118,62,.13)', 'rgba(255,246,222,.18)', 'rgba(120,84,40,.09)']);
-  x.save(); x.globalAlpha = 0.06; x.strokeStyle = '#5a4020'; x.lineWidth = 1;
-  for (let i = 0; i < w * h / 900; i++) { const px = rnd() * w, py = rnd() * h, a = rnd() * BS_TAU, l = 4 + rnd() * 14; x.beginPath(); x.moveTo(px, py); x.lineTo(px + Math.cos(a) * l, py + Math.sin(a) * l); x.stroke(); }
-  x.restore();
-  bsTexture(x, w, h, 0.18, 'multiply');
-  for (let i = 0; i < 2; i++) {
-    const cx = rnd() * w, cy = rnd() * h, r = s * (0.8 + rnd() * 1.2);
-    x.beginPath(); x.arc(cx, cy, r, 0, BS_TAU); x.strokeStyle = 'rgba(120,80,30,.12)'; x.lineWidth = s * 0.06; x.stroke();
-  }
-  bsVignette(x, w, h, 'rgba(96,60,22,.55)');
 }
 
-// ---------- token sprites (cached bitmaps; rings, HP and labels are drawn live) ----------
+/* Dungeon flagstones: irregular hand-laid stones (a jittered Voronoi tiling that never lines up with
+   the grid), each with its own colour and value, mottled texture, bevelled worn edges sitting proud
+   of a gritty mortar bed, the odd crack and chip, then uneven torch-light and a vignette. */
+function bsFlagstone(x, w, h, s, rnd, k) {
+  x.fillStyle = '#211d18'; x.fillRect(0, 0, w, h);
+  bsTile(x, bsFbm(3), w, h, s * 3, 0.55, 'overlay');
+  bsTile(x, bsNoise(), w, h, 128, 0.35, 'overlay');
+  // seeds: a jittered square lattice (not staggered, so the stones come out as irregular 4–6 sided
+  // slabs rather than a honeycomb); some seeds dropped (big slabs), some doubled (small fillers)
+  const sp = s * 1.12, jit = 0.78, gap = s * 0.03, cols = Math.ceil(w / sp) + 6, rows = Math.ceil(h / sp) + 6;
+  const cells = Array.from({ length: cols * rows }, () => []);
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const roll = rnd(), n = roll < 0.13 ? 0 : roll > 0.93 ? 2 : 1;
+    for (let i = 0; i < n; i++) cells[r * cols + c].push([(c - 3 + 0.5 + (rnd() - 0.5) * jit) * sp, (r - 3 + 0.5 + (rnd() - 0.5) * jit) * sp]);
+  }
+  const tex = bsFbm(5), grain = bsNoise();
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) for (const p of cells[r * cols + c]) {
+    if (p[0] < -sp * 1.5 || p[1] < -sp * 1.5 || p[0] > w + sp * 1.5 || p[1] > h + sp * 1.5) continue;
+    let poly = [[p[0] - sp * 3, p[1] - sp * 3], [p[0] + sp * 3, p[1] - sp * 3], [p[0] + sp * 3, p[1] + sp * 3], [p[0] - sp * 3, p[1] + sp * 3]];
+    for (let dr = -3; dr <= 3 && poly.length > 2; dr++) for (let dc = -3; dc <= 3 && poly.length > 2; dc++) {
+      const rr = r + dr, cc = c + dc; if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) continue;
+      for (const q of cells[rr * cols + cc]) {
+        if (q === p) continue;
+        const nx = q[0] - p[0], ny = q[1] - p[1], L = Math.hypot(nx, ny); if (L < 1e-6) continue;
+        const ux = nx / L, uy = ny / L;
+        poly = bsClipHalf(poly, ux, uy, ux * (p[0] + q[0]) / 2 + uy * (p[1] + q[1]) / 2 - gap * (0.75 + rnd() * 0.5) / 2);
+        if (poly.length < 3) break;
+      }
+    }
+    if (poly.length >= 3) bsStone(x, poly, s, rnd, k, tex, grain);
+  }
+  // grime in the low spots, a little moss, uneven light, then the room's edges fall away into dark
+  bsBlotches(x, w, h, s, rnd, Math.round(w * h / (s * s) / 10) + 4, ['rgba(12,10,6,.45)', 'rgba(0,0,0,.35)', 'rgba(40,52,24,.3)'], 'multiply', [1, 3.5]);
+  bsTile(x, bsFbm(9), w, h, Math.max(w, h) * 0.7, 0.55, 'soft-light', rnd() * 300, rnd() * 300);
+  bsBlotches(x, w, h, s, rnd, Math.max(2, Math.round(w * h / (s * s) / 90)), ['rgba(255,196,120,.10)', 'rgba(255,214,160,.08)'], 'screen', [3, 7]);
+  bsVignette(x, w, h, 'rgba(0,0,0,.55)', 0.3);
+}
+function bsStone(x, poly, s, rnd, k, tex, grain) {
+  const pts = bsRoughen(bsRoundPoly(poly, s * (0.05 + rnd() * 0.07)), s * 0.009, rnd, s * 0.06);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const q of pts) { if (q[0] < x0) x0 = q[0]; if (q[0] > x1) x1 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; }
+  const bw = x1 - x0, bh = y1 - y0, path = () => { x.beginPath(); bsPolyPath(x, pts); };
+  // most stones a warm grey; some cooler blue-grey, a few with a green or ochre cast
+  const roll = rnd();
+  const hue = roll < 0.58 ? 30 + rnd() * 14 : roll < 0.86 ? 205 + rnd() * 18 : roll < 0.94 ? 70 + rnd() * 20 : 24 + rnd() * 8;
+  const sat = roll < 0.58 ? 6 + rnd() * 7 : roll < 0.86 ? 5 + rnd() * 6 : roll < 0.94 ? 8 + rnd() * 7 : 16 + rnd() * 8;
+  const L = 27 + rnd() * 10 - (rnd() < 0.1 ? 6 : 0);
+  // seated in the mortar: a soft shadow down and to the right
+  x.save(); x.shadowColor = 'rgba(0,0,0,.6)'; x.shadowBlur = s * 0.045 * k; x.shadowOffsetX = s * 0.01 * k; x.shadowOffsetY = s * 0.018 * k;
+  path(); x.fillStyle = `hsl(${hue},${sat}%,${L}%)`; x.fill(); x.restore();
+  x.save(); path(); x.clip();
+  const gr = x.createLinearGradient(x0, y0, x1, y1);
+  gr.addColorStop(0, `hsl(${hue},${sat}%,${L + 5}%)`); gr.addColorStop(1, `hsl(${hue},${sat}%,${L - 5}%)`);
+  x.fillStyle = gr; x.fillRect(x0, y0, bw, bh);
+  // mottled stone: a random patch of cloudy noise, then fine grain
+  const ts = 50 + rnd() * 70;
+  x.globalCompositeOperation = 'soft-light'; x.globalAlpha = 0.85;
+  x.drawImage(tex, rnd() * (256 - ts), rnd() * (256 - ts), ts, ts, x0, y0, bw, bh);
+  x.globalCompositeOperation = 'overlay'; x.globalAlpha = 0.28;
+  x.drawImage(grain, rnd() * 128, rnd() * 128, 96 + rnd() * 32, 96 + rnd() * 32, x0, y0, bw, bh);
+  x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1;
+  // a worn, smoother patch where feet go
+  if (rnd() < 0.5) {
+    const cx = x0 + bw * (0.3 + rnd() * 0.4), cy = y0 + bh * (0.3 + rnd() * 0.4), rr = Math.max(bw, bh) * (0.3 + rnd() * 0.3);
+    const wg = x.createRadialGradient(cx, cy, 0, cx, cy, rr); wg.addColorStop(0, 'rgba(255,248,236,.07)'); wg.addColorStop(1, 'rgba(255,248,236,0)');
+    x.fillStyle = wg; x.fillRect(x0, y0, bw, bh);
+  }
+  // pits and specks
+  const pits = Math.round(bw * bh / (s * s) * 10);
+  for (let i = 0; i < pits; i++) {
+    x.beginPath(); x.arc(x0 + rnd() * bw, y0 + rnd() * bh, s * (0.004 + rnd() * 0.01), 0, BS_TAU);
+    x.fillStyle = rnd() < 0.7 ? 'rgba(0,0,0,.28)' : 'rgba(255,255,255,.07)'; x.fill();
+  }
+  // the odd hairline crack
+  if (rnd() < 0.17) {
+    let cx = x0 + bw * (0.1 + rnd() * 0.3), cy = y0 + bh * (0.15 + rnd() * 0.7); const ang = (rnd() - 0.5) * 1.4;
+    const crack = [[cx, cy]];
+    for (let i = 0; i < 7; i++) { cx += Math.cos(ang + (rnd() - 0.5) * 1.3) * s * 0.11; cy += Math.sin(ang + (rnd() - 0.5) * 1.3) * s * 0.11; crack.push([cx, cy]); }
+    x.beginPath(); crack.forEach((q, i) => i ? x.lineTo(q[0], q[1]) : x.moveTo(q[0], q[1]));
+    x.lineCap = 'round'; x.lineJoin = 'round';
+    x.lineWidth = s * 0.012; x.strokeStyle = 'rgba(10,8,6,.55)'; x.stroke();
+    x.save(); x.translate(s * 0.007, s * 0.007); x.lineWidth = s * 0.006; x.strokeStyle = 'rgba(255,240,220,.07)'; x.stroke(); x.restore();
+  }
+  // bevel: soft highlight top-left, soft shade bottom-right (not a black outline)
+  bsBevel(x, pts, [x0, y0, x1, y1], k, s * 0.055, 'rgba(255,240,220,.17)', 'rgba(0,0,0,.5)', s * 0.02);
+  // chipped edges: little bites of mortar
+  const chips = Math.floor(rnd() * 3);
+  for (let i = 0; i < chips; i++) {
+    const q = pts[Math.floor(rnd() * pts.length)];
+    x.beginPath(); x.ellipse(q[0], q[1], s * (0.02 + rnd() * 0.035), s * (0.015 + rnd() * 0.02), rnd() * Math.PI, 0, BS_TAU);
+    x.fillStyle = 'rgba(22,20,16,.85)'; x.fill();
+  }
+  x.restore();
+}
+
+/* Tavern planks: boards of mixed lengths and timber (honey, walnut, the odd weathered grey) with
+   long grain, knots and end checks, rounded crowns, soft shadowed seams, nail heads, foot-worn paths
+   and old spills. Board width deliberately does not divide the grid square. */
+function bsPlanks(x, w, h, s, rnd, k) {
+  x.fillStyle = '#120b06'; x.fillRect(0, 0, w, h);
+  const ph = s * 0.455, tex = bsFbm(5), grain = bsNoise();
+  for (let y = -rnd() * ph * 0.5; y < h; y += ph) {
+    let xx = -rnd() * s * 3; const rowTone = (rnd() - 0.5) * 3;
+    while (xx < w) { const len = s * (2.4 + rnd() * 3.6); bsPlank(x, xx, y, len, ph, rnd, k, tex, grain, rowTone); xx += len; }
+  }
+  bsTile(x, bsFbm(13), w, h, Math.max(w, h) * 0.6, 0.5, 'soft-light', rnd() * 200, rnd() * 200);
+  bsBlotches(x, w, h, s, rnd, Math.round(w * h / (s * s) / 22) + 3, ['rgba(40,18,6,.4)', 'rgba(0,0,0,.3)', 'rgba(60,30,10,.25)'], 'multiply', [0.8, 2.6]);
+  bsBlotches(x, w, h, s, rnd, Math.max(2, Math.round(w * h / (s * s) / 70)), ['rgba(255,210,150,.10)'], 'screen', [3, 7]);
+  bsVignette(x, w, h, 'rgba(0,0,0,.6)', 0.3);
+}
+function bsPlank(x, x0, y0, len, ph, rnd, k, tex, grain, rowTone) {
+  const gap = Math.max(1, ph * 0.055), fam = rnd();
+  let hue, sat, L;
+  if (fam < 0.62) { hue = 24 + rnd() * 7; sat = 34 + rnd() * 10; L = 27 + rnd() * 6; }
+  else if (fam < 0.9) { hue = 19 + rnd() * 6; sat = 30 + rnd() * 10; L = 22 + rnd() * 4; }
+  else { hue = 30 + rnd() * 8; sat = 16 + rnd() * 8; L = 28 + rnd() * 5; }
+  L += rowTone;
+  const X = x0 + gap / 2, Y = y0 + gap / 2, Wd = len - gap, Hd = ph - gap, rad = ph * 0.07;
+  x.save(); x.shadowColor = 'rgba(0,0,0,.65)'; x.shadowBlur = ph * 0.12 * k; x.shadowOffsetY = ph * 0.05 * k;
+  bsRoundRect(x, X, Y, Wd, Hd, rad); x.fillStyle = `hsl(${hue},${sat}%,${L}%)`; x.fill(); x.restore();
+  x.save(); bsRoundRect(x, X, Y, Wd, Hd, rad); x.clip();
+  // a rounded crown: lighter along the middle, darker at the edges
+  const gr = x.createLinearGradient(0, Y, 0, Y + Hd);
+  gr.addColorStop(0, `hsl(${hue},${sat}%,${L - 2}%)`); gr.addColorStop(0.3, `hsl(${hue},${sat}%,${L + 4}%)`);
+  gr.addColorStop(0.65, `hsl(${hue},${sat}%,${L + 1}%)`); gr.addColorStop(1, `hsl(${hue},${sat}%,${L - 7}%)`);
+  x.fillStyle = gr; x.fillRect(X, Y, Wd, Hd);
+  // grain: noise stretched hard along the board
+  x.globalCompositeOperation = 'overlay'; x.globalAlpha = 0.5;
+  x.drawImage(tex, rnd() * 220, rnd() * 100, 14 + rnd() * 18, 150, X, Y, Wd, Hd);
+  x.globalCompositeOperation = 'multiply'; x.globalAlpha = 0.22;
+  x.drawImage(grain, rnd() * 240, rnd() * 60, 4 + rnd() * 4, 190, X, Y, Wd, Hd);
+  x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1;
+  const lines = 4 + Math.floor(rnd() * 5);
+  for (let i = 0; i < lines; i++) {
+    const yy = Y + Hd * (0.12 + rnd() * 0.76), amp = Hd * (0.03 + rnd() * 0.07), fr = 1.5 + rnd() * 3.5, p0 = rnd() * BS_TAU;
+    x.beginPath();
+    for (let t = 0; t <= 1.0001; t += 0.04) { const px = X + t * Wd, py = yy + Math.sin(t * fr * Math.PI + p0) * amp; t === 0 ? x.moveTo(px, py) : x.lineTo(px, py); }
+    x.lineWidth = Hd * (0.012 + rnd() * 0.025); x.strokeStyle = `hsla(${hue},${sat}%,${L - 10}%,${0.2 + rnd() * 0.25})`; x.stroke();
+  }
+  if (rnd() < 0.28) {
+    const kx = X + Wd * (0.2 + rnd() * 0.6), ky = Y + Hd * (0.35 + rnd() * 0.3);
+    const kg = x.createRadialGradient(kx, ky, 0, kx, ky, Hd * 0.3); kg.addColorStop(0, `hsla(${hue},${sat}%,${L - 14}%,.85)`); kg.addColorStop(1, `hsla(${hue},${sat}%,${L - 6}%,0)`);
+    x.fillStyle = kg; x.beginPath(); x.ellipse(kx, ky, Hd * 0.42, Hd * 0.24, 0, 0, BS_TAU); x.fill();
+    for (let i = 1; i <= 3; i++) { x.beginPath(); x.ellipse(kx, ky, Hd * 0.14 * i, Hd * 0.08 * i, 0, 0, BS_TAU); x.strokeStyle = `hsla(${hue},${sat}%,${L - 12}%,.35)`; x.lineWidth = Hd * 0.018; x.stroke(); }
+  }
+  // end grain darkens toward each butt joint
+  for (const [ex, dir] of [[X, 1], [X + Wd, -1]]) {
+    const eg = x.createLinearGradient(ex, 0, ex + dir * Hd * 0.6, 0); eg.addColorStop(0, 'rgba(0,0,0,.22)'); eg.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = eg; x.fillRect(Math.min(ex, ex + dir * Hd * 0.6), Y, Hd * 0.6, Hd);
+  }
+  x.fillStyle = 'rgba(255,226,190,.09)'; x.fillRect(X, Y, Wd, Math.max(0.8, Hd * 0.05));
+  x.restore();
+  for (const nx of [X + ph * 0.3, X + Wd - ph * 0.3]) for (const ny of [Y + Hd * 0.28, Y + Hd * 0.72]) {
+    x.beginPath(); x.arc(nx, ny, ph * 0.042, 0, BS_TAU); x.fillStyle = 'rgba(14,10,8,.75)'; x.fill();
+    x.beginPath(); x.arc(nx - ph * 0.01, ny - ph * 0.012, ph * 0.018, 0, BS_TAU); x.fillStyle = 'rgba(255,236,210,.18)'; x.fill();
+  }
+}
+
+/* Parchment: cream stock with cloudy tone, fibres, foxing and the odd ring stain, two soft fold
+   creases and darkened, aged edges. */
+function bsParchment(x, w, h, s, rnd, k) {
+  x.fillStyle = '#ddc9a0'; x.fillRect(0, 0, w, h);
+  bsTile(x, bsFbm(21), w, h, Math.max(w, h) * 0.55, 0.2, 'multiply', rnd() * 200, rnd() * 200);
+  bsTile(x, bsFbm(4), w, h, s * 2.4, 0.35, 'soft-light');
+  bsBlotches(x, w, h, s, rnd, Math.round(w * h / (s * s) / 6) + 8, ['rgba(160,118,62,.13)', 'rgba(255,246,222,.2)', 'rgba(120,84,40,.1)']);
+  x.save(); x.globalAlpha = 0.07; x.strokeStyle = '#5a4020'; x.lineWidth = 1;
+  for (let i = 0; i < w * h / 700; i++) { const px = rnd() * w, py = rnd() * h, a = rnd() * BS_TAU, l = 4 + rnd() * 16; x.beginPath(); x.moveTo(px, py); x.quadraticCurveTo(px + Math.cos(a + 0.4) * l * 0.5, py + Math.sin(a + 0.4) * l * 0.5, px + Math.cos(a) * l, py + Math.sin(a) * l); x.stroke(); }
+  x.restore();
+  bsTile(x, bsNoise(), w, h, 128, 0.16, 'multiply');
+  // foxing: small rust-brown spots
+  for (let i = 0; i < w * h / (s * s) / 3; i++) {
+    const cx = rnd() * w, cy = rnd() * h, r = s * (0.01 + rnd() * 0.04);
+    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r); g.addColorStop(0, 'rgba(130,80,30,.22)'); g.addColorStop(1, 'rgba(130,80,30,0)');
+    x.fillStyle = g; x.fillRect(cx - r, cy - r, r * 2, r * 2);
+  }
+  for (let i = 0; i < 2; i++) {
+    const cx = rnd() * w, cy = rnd() * h, r = s * (0.7 + rnd() * 1.1);
+    x.beginPath(); x.arc(cx, cy, r, rnd() * 2, rnd() * 2 + 5); x.strokeStyle = 'rgba(120,80,30,.13)'; x.lineWidth = s * (0.04 + rnd() * 0.04); x.stroke();
+  }
+  // fold creases
+  for (const vert of [true, false]) {
+    const p = (vert ? w : h) * (0.4 + rnd() * 0.2), len = vert ? h : w;
+    for (const [d, col] of [[0, 'rgba(110,76,36,.16)'], [s * 0.025, 'rgba(255,250,236,.28)']]) {
+      const g = vert ? x.createLinearGradient(p + d - s * 0.05, 0, p + d + s * 0.05, 0) : x.createLinearGradient(0, p + d - s * 0.05, 0, p + d + s * 0.05);
+      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, col); g.addColorStop(1, 'rgba(0,0,0,0)');
+      x.fillStyle = g; if (vert) x.fillRect(p + d - s * 0.05, 0, s * 0.1, len); else x.fillRect(0, p + d - s * 0.05, len, s * 0.1);
+    }
+  }
+  bsVignette(x, w, h, 'rgba(110,64,22,.6)', 0.28, 'multiply');
+  bsVignette(x, w, h, 'rgba(60,32,10,.35)', 0.45);
+}
+
+// ---------- token art (cached bitmaps; ring, HP, badges and labels are drawn live) ----------
 const BS_SPRITES = new Map();
+const BS_GLYPHS = new Map();
+/* An emoji turned into an engraved cream emblem: keeps the emoji's own shading for detail, but
+   reads as one deliberate set of icons rather than a sticker sheet. */
+function bsGlyph(emoji, size) {
+  const key = emoji + '|' + size;
+  if (BS_GLYPHS.has(key)) return BS_GLYPHS.get(key);
+  const c = bsCanvas(size, size), x = c.getContext('2d', { willReadFrequently: true });
+  x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.font = `${Math.round(size * 0.78)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+  x.fillText(emoji, size / 2, size * 0.54);
+  try {
+    const img = x.getImageData(0, 0, size, size), a = img.data; let lo = 1, hi = 0;
+    for (let i = 0; i < a.length; i += 4) if (a[i + 3] > 140) { const l = (0.2126 * a[i] + 0.7152 * a[i + 1] + 0.0722 * a[i + 2]) / 255; if (l < lo) lo = l; if (l > hi) hi = l; }
+    const span = Math.max(0.2, hi - lo), ink = BS_INK.split(',').map(Number);
+    for (let i = 0; i < a.length; i += 4) {
+      if (!a[i + 3]) continue;
+      const l = (0.2126 * a[i] + 0.7152 * a[i + 1] + 0.0722 * a[i + 2]) / 255, v = 0.52 + 0.48 * bsClamp((l - lo) / span, 0, 1);
+      a[i] = ink[0] * v; a[i + 1] = ink[1] * v; a[i + 2] = ink[2] * v;
+    }
+    x.putImageData(img, 0, 0);
+  } catch (_) { /* unreadable: keep the emoji as drawn */ }
+  if (BS_GLYPHS.size > 120) BS_GLYPHS.clear();
+  BS_GLYPHS.set(key, c);
+  return c;
+}
+// a minted coin for tokens without art: lit enamel, cloudy texture, an engraved border, an embossed emblem or initials
+function bsGenDisc(x, info, px) {
+  const r = px / 2, h = bsHash(info.base + '|' + info.kind), rnd = bsRng(h);
+  const list = BS_KIND_PALETTES[info.kind] || BS_KIND_PALETTES.neutral, pal = BS_PALETTES[list[h % list.length]];
+  const g = x.createRadialGradient(r * 0.66, r * 0.5, r * 0.04, r, r * 1.04, r * 1.06);
+  g.addColorStop(0, pal[0]); g.addColorStop(0.52, pal[1]); g.addColorStop(1, pal[2]);
+  x.fillStyle = g; x.fillRect(0, 0, px, px);
+  const ts = 70 + rnd() * 90, tex = bsFbm(5);
+  x.globalCompositeOperation = 'soft-light'; x.globalAlpha = 0.75; x.drawImage(tex, rnd() * (256 - ts), rnd() * (256 - ts), ts, ts, 0, 0, px, px);
+  x.globalCompositeOperation = 'overlay'; x.globalAlpha = 0.12; x.drawImage(bsNoise(), rnd() * 100, rnd() * 100, 120, 120, 0, 0, px, px);
+  x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1;
+  // engraved border
+  const lw = Math.max(1, px * 0.011);
+  x.beginPath(); x.arc(r, r + lw * 0.6, r * 0.82, 0, BS_TAU); x.lineWidth = lw; x.strokeStyle = 'rgba(255,255,255,.13)'; x.stroke();
+  x.beginPath(); x.arc(r, r, r * 0.82, 0, BS_TAU); x.strokeStyle = 'rgba(0,0,0,.4)'; x.stroke();
+  x.save();
+  x.shadowColor = 'rgba(0,0,0,.6)'; x.shadowBlur = px * 0.03; x.shadowOffsetY = px * 0.014;
+  if (info.emoji) {
+    const gs = Math.round(px * 0.62); x.drawImage(bsGlyph(info.emoji, Math.max(48, gs)), r - gs / 2, r - gs / 2, gs, gs);
+  } else {
+    const txt = bsInitials(info.base);
+    x.font = `700 ${Math.round(px * (txt.length > 1 ? 0.42 : 0.5))}px "Cormorant Garamond", Georgia, serif`;
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    const tg = x.createLinearGradient(0, r * 0.6, 0, r * 1.4); tg.addColorStop(0, '#fbf4e4'); tg.addColorStop(1, '#d6c4a0');
+    x.fillStyle = tg; x.fillText(txt, r, r * 1.05);
+  }
+  x.restore();
+}
 function bsSprite(info, px, onReady) {
   const imgE = info.img ? bsImage(info.img, onReady) : null;
   const key = `${imgE ? 'i:' + info.img : 'g:' + info.base + info.emoji}|${info.kind}|${info.down ? 1 : 0}|${px}`;
@@ -377,36 +611,16 @@ function bsSprite(info, px, onReady) {
   if (imgE) {
     const im = imgE.img, k = Math.max(px / im.width, px / im.height);
     x.imageSmoothingQuality = 'high';
+    x.fillStyle = '#1a1d24'; x.fillRect(0, 0, px, px);
     x.drawImage(im, r - im.width * k / 2, r - im.height * k / 2, im.width * k, im.height * k);
-  } else {
-    const list = BS_KIND_PALETTES[info.kind] || BS_KIND_PALETTES.neutral;
-    const pal = BS_PALETTES[list[bsHash(info.base) % list.length]];
-    const g = x.createRadialGradient(r * 0.72, r * 0.55, r * 0.05, r, r, r * 1.08);
-    g.addColorStop(0, pal[0]); g.addColorStop(0.55, pal[1]); g.addColorStop(1, pal[2]);
-    x.fillStyle = g; x.fillRect(0, 0, px, px);
-    x.globalCompositeOperation = 'overlay'; x.globalAlpha = 0.18; x.fillStyle = x.createPattern(bsNoise(), 'repeat'); x.fillRect(0, 0, px, px);
-    x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1;
-    x.beginPath(); x.arc(r, r, r * 0.8, 0, BS_TAU); x.lineWidth = Math.max(1, px * 0.012); x.strokeStyle = 'rgba(255,255,255,.16)'; x.stroke();
-    x.beginPath(); x.arc(r, r, r * 0.76, 0, BS_TAU); x.strokeStyle = 'rgba(0,0,0,.18)'; x.stroke();
-    x.textAlign = 'center'; x.textBaseline = 'middle';
-    x.shadowColor = 'rgba(0,0,0,.55)'; x.shadowBlur = px * 0.04; x.shadowOffsetY = px * 0.015;
-    if (info.emoji) {
-      x.font = `${Math.round(px * 0.46)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
-      x.fillText(info.emoji, r, r * 1.04);
-    } else {
-      const txt = bsInitials(info.base);
-      x.font = `700 ${Math.round(px * (txt.length > 1 ? 0.4 : 0.48))}px "Cormorant Garamond", Georgia, serif`;
-      x.fillStyle = 'rgba(255,250,240,.94)'; x.fillText(txt, r, r * 1.04);
-    }
-    x.shadowColor = 'transparent';
-  }
-  // inner shadow + soft top light: a coin, not a sticker
-  const v = x.createRadialGradient(r, r * 0.85, r * 0.55, r, r, r * 1.02);
-  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.42)'); x.fillStyle = v; x.fillRect(0, 0, px, px);
-  const hl = x.createLinearGradient(0, 0, 0, px); hl.addColorStop(0, 'rgba(255,255,255,.14)'); hl.addColorStop(0.45, 'rgba(255,255,255,0)'); x.fillStyle = hl; x.fillRect(0, 0, px, px);
+  } else bsGenDisc(x, info, px);
+  // set into a bezel: the art darkens toward the rim, with a soft sheen from the top left
+  const v = x.createRadialGradient(r, r, r * 0.7, r, r, r);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(0.8, 'rgba(0,0,0,.14)'); v.addColorStop(1, 'rgba(0,0,0,.55)'); x.fillStyle = v; x.fillRect(0, 0, px, px);
+  const hl = x.createLinearGradient(0, 0, px * 0.6, px); hl.addColorStop(0, 'rgba(255,255,255,.16)'); hl.addColorStop(0.42, 'rgba(255,255,255,0)'); x.fillStyle = hl; x.fillRect(0, 0, px, px);
   if (info.down) {
     x.globalCompositeOperation = 'saturation'; x.fillStyle = '#808080'; x.fillRect(0, 0, px, px);
-    x.globalCompositeOperation = 'multiply'; x.fillStyle = '#6a6a6a'; x.fillRect(0, 0, px, px);
+    x.globalCompositeOperation = 'multiply'; x.fillStyle = '#626262'; x.fillRect(0, 0, px, px);
     x.globalCompositeOperation = 'source-over';
   }
   x.restore();
@@ -414,25 +628,56 @@ function bsSprite(info, px, onReady) {
   BS_SPRITES.set(key, c);
   return c;
 }
+// soft contact shadow (≈ CSS 0 2px 6px rgba(0,0,0,.6) at 100%): a disc of radius 100 in a 256² sprite
 let BS_SHADOW = null;
-function bsShadow() {
+function bsShadowSprite() {
   if (BS_SHADOW) return BS_SHADOW;
-  const c = bsCanvas(128, 128), x = c.getContext('2d'), g = x.createRadialGradient(64, 64, 20, 64, 64, 64);
-  g.addColorStop(0, 'rgba(0,0,0,.6)'); g.addColorStop(0.6, 'rgba(0,0,0,.25)'); g.addColorStop(1, 'rgba(0,0,0,0)');
-  x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+  const c = bsCanvas(256, 256), x = c.getContext('2d'), g = x.createRadialGradient(128, 128, 0, 128, 128, 128), sig = 7;
+  g.addColorStop(0, 'rgba(0,0,0,1)');
+  for (let i = 0; i <= 20; i++) { const rr = 100 - 3 * sig + i * 6 * sig / 20; g.addColorStop(rr / 128, `rgba(0,0,0,${(0.5 * bsErfc((rr - 100) / (sig * Math.SQRT2))).toFixed(4)})`); }
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 256, 256);
   return (BS_SHADOW = c);
+}
+// warm halo behind the token whose turn it is: token radius ↔ 72 px
+let BS_GLOW = null;
+function bsGlowSprite() {
+  if (BS_GLOW) return BS_GLOW;
+  const c = bsCanvas(256, 256), x = c.getContext('2d'), g = x.createRadialGradient(128, 128, 0, 128, 128, 128);
+  g.addColorStop(0, 'rgba(255,206,110,1)'); g.addColorStop(0.55, 'rgba(255,206,110,.95)'); g.addColorStop(0.68, 'rgba(250,190,90,.45)');
+  g.addColorStop(0.84, 'rgba(245,170,70,.12)'); g.addColorStop(1, 'rgba(245,170,70,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 256, 256);
+  return (BS_GLOW = c);
+}
+// one bevelled metal ring in the side colour, with hairlines so it reads on any floor
+function bsBezel(x, X, Y, R, ring, col) {
+  x.beginPath(); x.arc(X, Y, R - ring / 2, 0, BS_TAU); x.lineWidth = ring; x.strokeStyle = bsRingStyle(x, X, Y, R, col); x.stroke();
+  x.lineWidth = 1;
+  x.beginPath(); x.arc(X, Y, R + 0.3, 0, BS_TAU); x.strokeStyle = 'rgba(0,0,0,.6)'; x.stroke();
+  x.beginPath(); x.arc(X, Y, R - ring - 0.3, 0, BS_TAU); x.strokeStyle = 'rgba(0,0,0,.42)'; x.stroke();
+  if (ring >= 2) { x.beginPath(); x.arc(X, Y, R - ring * 0.6, Math.PI * 1.1, Math.PI * 1.5); x.lineWidth = Math.max(0.6, ring * 0.3); x.lineCap = 'round'; x.strokeStyle = 'rgba(255,255,255,.42)'; x.stroke(); x.lineCap = 'butt'; }
+}
+/* HP gauge: an arc segment just inside the ring along the bottom of the disc, filling left to right.
+   f = 0..1 (GM), or null for the players' plain "bloodied" mark. */
+function bsHpArc(x, X, Y, rIn, R, f) {
+  const lw = bsClamp(R * 0.085, 2, 5), r = rIn - lw / 2 - 0.75, a0 = Math.PI * 0.8, span = Math.PI * 0.6;
+  if (r < 4) return;
+  x.save(); x.lineCap = 'round';
+  x.beginPath(); x.arc(X, Y, r, a0, a0 - span, true); x.lineWidth = lw + 2; x.strokeStyle = 'rgba(6,8,12,.75)'; x.stroke();
+  const col = f == null ? '#e5484d' : f > 0.5 ? '#4ade80' : f > 0.25 ? '#fbbf24' : '#f05252', ff = f == null ? 1 : f;
+  if (ff > 0) { x.beginPath(); x.arc(X, Y, r, a0, a0 - span * ff, true); x.lineWidth = lw; x.strokeStyle = col; x.stroke(); }
+  x.restore();
 }
 /* Draw a token disc with its ring into an HTML canvas (tray, initiative strip, display ribbon). */
 function bsDisc(canvas, info, cssPx, opts = {}) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5), px = Math.round(cssPx * dpr);
   canvas.width = px; canvas.height = px; canvas.style.width = cssPx + 'px'; canvas.style.height = cssPx + 'px';
-  const x = canvas.getContext('2d'), ring = Math.max(2, px * 0.07), R = px / 2;
+  const x = canvas.getContext('2d'), R = px / 2, ring = Math.max(2 * dpr, px * 0.06);
   const sp = bsSprite(info, bsBucket(px), () => bsDisc(canvas, info, cssPx, opts));
   x.clearRect(0, 0, px, px);
-  x.drawImage(sp, ring * 0.6, ring * 0.6, px - ring * 1.2, px - ring * 1.2);
-  x.beginPath(); x.arc(R, R, R - ring / 2, 0, BS_TAU); x.lineWidth = ring; x.strokeStyle = bsRingStyle(x, R, R, R, opts.ring || (info.down ? '#6b7280' : BS_KINDS[info.kind].ring)); x.stroke();
-  x.beginPath(); x.arc(R, R, R - ring - 0.5, 0, BS_TAU); x.lineWidth = 1; x.strokeStyle = 'rgba(0,0,0,.45)'; x.stroke();
-  if (info.down) bsCross(x, R, R, R * 0.55, Math.max(2, px * 0.07));
+  x.drawImage(sp, ring * 0.5, ring * 0.5, px - ring, px - ring);
+  bsBezel(x, R, R, R - 0.5, ring, opts.ring || (info.down ? '#7b818c' : BS_KINDS[info.kind].ring));
+  if (info.down) bsCross(x, R, R, R * 0.5, Math.max(2, px * 0.07));
   return canvas;
 }
 const bsBucket = px => px <= 72 ? 72 : px <= 144 ? 144 : px <= 288 ? 288 : 512;
@@ -445,30 +690,55 @@ function bsCross(x, cx, cy, r, lw) {
   x.restore();
 }
 function bsRoundRect(x, X, Y, W, H, r) { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + W, Y, X + W, Y + H, r); x.arcTo(X + W, Y + H, X, Y + H, r); x.arcTo(X, Y + H, X, Y, r); x.arcTo(X, Y, X + W, Y, r); x.closePath(); }
-function bsPill(x, text, cx, top, opt = {}) {
-  const fs = opt.size || 12, padX = fs * 0.62, h = Math.round(fs * 1.62);
+// pills: measure (with an optional max total width, truncating with an ellipsis), then draw
+function bsPillMeasure(x, text, opt = {}) {
+  const fs = opt.size || 12, padX = Math.round(fs * 0.62), h = Math.round(fs * 1.62), dotW = opt.dot ? Math.round(fs * 0.8) : 0;
   x.font = `${opt.weight || 600} ${fs}px Inter, -apple-system, "Segoe UI", Roboto, sans-serif`;
-  if (opt.max && x.measureText(text).width > opt.max) { while (text.length > 2 && x.measureText(text + '…').width > opt.max) text = text.slice(0, -1); text = text.trimEnd() + '…'; }
-  const w = Math.ceil(x.measureText(text).width) + padX * 2 + (opt.dot ? fs * 0.8 : 0);
-  const X = Math.round(cx - w / 2), Y = Math.round(top);
-  bsRoundRect(x, X, Y, w, h, h / 2);
-  x.fillStyle = opt.bg || 'rgba(12,14,20,.8)'; x.fill();
-  x.lineWidth = 1; x.strokeStyle = opt.border || 'rgba(255,255,255,.12)'; x.stroke();
-  let tx = X + padX;
-  if (opt.dot) { x.beginPath(); x.arc(tx + fs * 0.25, Y + h / 2, fs * 0.25, 0, BS_TAU); x.fillStyle = opt.dot; x.fill(); tx += fs * 0.8; }
+  let t = String(text);
+  const room = opt.maxW ? opt.maxW - padX * 2 - dotW : 0;
+  if (room > 0 && x.measureText(t).width > room) { while (t.length > 1 && x.measureText(t + '…').width > room) t = t.slice(0, -1); t = t.trimEnd() + '…'; }
+  return { text: t, w: Math.ceil(x.measureText(t).width) + padX * 2 + dotW, h, fs, padX, dotW };
+}
+function bsPillDraw(x, m, X, Y, opt = {}) {
+  const dpr = opt.dpr || 1; X = Math.round(X * dpr) / dpr; Y = Math.round(Y * dpr) / dpr;
+  x.font = `${opt.weight || 600} ${m.fs}px Inter, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  bsRoundRect(x, X, Y, m.w, m.h, m.h / 2);
+  x.fillStyle = opt.bg || 'rgba(14,16,22,.84)'; x.fill();
+  x.lineWidth = opt.borderW || 1; x.strokeStyle = opt.border || 'rgba(255,255,255,.12)'; x.stroke();
+  let tx = X + m.padX;
+  if (opt.dot) { x.beginPath(); x.arc(tx + m.fs * 0.25, Y + m.h / 2, m.fs * 0.25, 0, BS_TAU); x.fillStyle = opt.dot; x.fill(); tx += m.dotW; }
   x.fillStyle = opt.color || '#f3f4f6'; x.textAlign = 'left'; x.textBaseline = 'middle';
-  x.fillText(text, tx, Y + h / 2 + 0.5);
-  return { x: X, y: Y, w, h };
+  x.fillText(m.text, tx, Y + m.h / 2 + 0.5);
+  return { x: X, y: Y, w: m.w, h: m.h };
+}
+// centred pill (opt.max = maximum text width)
+function bsPill(x, text, cx, top, opt = {}) {
+  const fs = opt.size || 12, extra = Math.round(fs * 0.62) * 2 + (opt.dot ? Math.round(fs * 0.8) : 0);
+  const m = bsPillMeasure(x, text, { ...opt, maxW: opt.max ? opt.max + extra : 0 });
+  return bsPillDraw(x, m, cx - m.w / 2, top, opt);
 }
 
 /* ---------- the view ----------
-   new BattleView(canvas, { player }) — player = the TV: no hidden tokens, no DM-only drawings,
-   no HP numbers, fog drawn as solid darkness. Set data with setScene / setEncounter / setChars and
-   transient overlays through view.live; call request() after changing anything. */
+   new BattleView(canvas, { player, labels }) — player = the TV: no hidden tokens, no DM-only drawings,
+   no HP numbers, fog drawn as solid darkness, and only the active combatant is labelled.
+   labels (GM only): 'focus' (default: hovered, selected, dragged and active-turn tokens) or 'all'
+   (every token big enough to label); also settable later as view.labels.
+   safe: optional screen insets { t, r, b, l } covered by floating UI, which labels keep out of
+   (view.safe works too). backdrop: optional colour beyond the map edge (view.backdrop too).
+   Set data with setScene / setEncounter / setChars and transient overlays through view.live; call
+   request() after changing anything. */
+const BS_VIEWS = new Set();
+if (typeof document !== 'undefined' && document.fonts && document.fonts.addEventListener) {
+  // initials are drawn in the display serif: rebuild token art once the web fonts arrive
+  document.fonts.addEventListener('loadingdone', () => { BS_SPRITES.clear(); BS_VIEWS.forEach(v => v.request()); });
+}
 class BattleView {
   constructor(canvas, opts = {}) {
     this.cv = canvas; this.ctx = canvas.getContext('2d');
     this.player = !!opts.player;
+    this.labels = opts.labels === 'all' ? 'all' : 'focus';
+    this.safe = opts.safe || null;
+    this.backdrop = opts.backdrop || null;
     this.cam = { x: 0, y: 0, z: 1 };
     this.scene = null; this.enc = null; this.chars = []; this.turnId = null; this.rule = '5';
     this.sel = new Set(); this.hover = null; this.selDrawing = null;
@@ -476,14 +746,15 @@ class BattleView {
     this.pings = []; this.tweens = new Map(); this.lastPos = new Map();
     this.dpr = 1; this.W = 0; this.H = 0; this.raf = 0; this.dirty = true;
     this.onCamera = null; this.onFrame = null;
-    this._fog = { sig: null }; this._fogSig = ''; this._tmp = null; this._hatch = null;
+    this._fog = { sig: null }; this._fogSig = ''; this._lbl = []; this._discs = [];
     this._loop = this._loop.bind(this);
     this._redraw = () => this.request();
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas.parentElement);
+    BS_VIEWS.add(this);
     this.resize();
   }
-  destroy() { this.dead = true; this.ro.disconnect(); if (this.raf) cancelAnimationFrame(this.raf); }
+  destroy() { this.dead = true; BS_VIEWS.delete(this); this.ro.disconnect(); if (this.raf) cancelAnimationFrame(this.raf); }
   resize() {
     const r = this.cv.parentElement.getBoundingClientRect();
     const dpr = Math.min(window.devicePixelRatio || 1, 2.5), W = Math.max(1, Math.round(r.width)), H = Math.max(1, Math.round(r.height));
@@ -493,7 +764,6 @@ class BattleView {
     this.W = W; this.H = H; this.dpr = dpr;
     this.cv.width = Math.round(W * dpr); this.cv.height = Math.round(H * dpr);
     this.cv.style.width = W + 'px'; this.cv.style.height = H + 'px';
-    this._tmp = null;
     if (had && c) { this.cam.x = W / 2 - c[0] * this.cam.z; this.cam.y = H / 2 - c[1] * this.cam.z; }
     this.request(true);
   }
@@ -548,7 +818,8 @@ class BattleView {
     if (anim && !this.raf) this.raf = requestAnimationFrame(this._loop);
   }
 
-  // which tokens are drawn, where (live drag, tweens) and in what order
+  /* Which tokens are drawn, where (live drag, tweens) and in what order. Tokens resting on the same
+     square fan out and shrink a little so each stays visible and clickable (bx/by keep the true spot). */
   tokenList() {
     const sc = this.scene; if (!sc) return [];
     const now = performance.now(), out = [];
@@ -565,7 +836,22 @@ class BattleView {
           else { x = tw.from[0] + (tw.to[0] - tw.from[0]) * k; y = tw.from[1] + (tw.to[1] - tw.from[1]) * k; }
         }
       }
-      out.push({ t, x, y, r: bsTokenRadius(sc, t), dragging: !!d });
+      out.push({ t, x, y, bx: x, by: y, r: bsTokenRadius(sc, t), dragging: !!d, stack: 1 });
+    }
+    if (out.length > 1) {
+      const tol = bsGrid(sc).size * 0.3, groups = [];
+      for (const e of out) {
+        if (e.dragging) continue;
+        let g = groups.find(q => Math.abs(q.x - e.t.x) < tol && Math.abs(q.y - e.t.y) < tol && Math.abs(q.r - e.r) < 0.5);
+        if (!g) groups.push(g = { x: e.t.x, y: e.t.y, r: e.r, list: [] });
+        g.list.push(e);
+      }
+      for (const g of groups) {
+        const m = g.list.length; if (m < 2) continue;
+        const k = [1, 1, 0.6, 0.52, 0.46][Math.min(m, 4)] * (m > 4 ? 0.85 : 1), rho = g.r * [0, 0, 0.45, 0.55, 0.6][Math.min(m, 4)];
+        g.list.sort((a, b) => (a.t.id < b.t.id ? -1 : 1));
+        g.list.forEach((e, i) => { const a = -Math.PI * 0.75 + i * BS_TAU / m; e.x += Math.cos(a) * rho; e.y += Math.sin(a) * rho; e.r *= k; e.stack = m; });
+      }
     }
     out.sort((a, b) => (b.r - a.r) || ((this.sel.has(a.t.id) ? 1 : 0) - (this.sel.has(b.t.id) ? 1 : 0)) || ((a.dragging ? 1 : 0) - (b.dragging ? 1 : 0)));
     return out;
@@ -606,7 +892,7 @@ class BattleView {
     let anim = false;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // on the TV, beyond the map edge is the same darkness as the fog, so there is no seam
-    ctx.fillStyle = this.player && sc && sc.fog && sc.fog.on ? '#05070b' : BS_BACKDROP; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = this.player && sc && sc.fog && sc.fog.on ? '#05070b' : this.backdrop || BS_BACKDROP; ctx.fillRect(0, 0, W, H);
     if (!sc) return false;
     const { w, h } = bsSceneSize(sc), z = this.cam.z;
     const [mx, my] = this.toScreen(0, 0);
@@ -618,7 +904,10 @@ class BattleView {
     for (const d of drawings) if (d.type === 'template') this.drawTemplate(sc, d, d === this.selDrawing);
     for (const d of drawings) if (d.type !== 'template') this.drawShape(sc, d, d === this.selDrawing);
     anim = this.drawTokens(sc, now) || anim;
+    // the TV labels before the fog (so darkness covers them); the GM's sit above it, always legible
+    if (this.player) this.drawLabels();
     this.drawFog(sc, w, h);
+    if (!this.player) this.drawLabels();
     anim = this.drawOverlays(sc, now) || anim;
     return anim;
   }
@@ -626,14 +915,15 @@ class BattleView {
     if (sc.bg) {
       const e = bsImage(sc.bg, this._redraw);
       if (!e) return null;
-      if (!e.mips) e.mips = bsMips(e.img);
-      return { mips: e.mips, scale: e.img.width / bsSceneSize(sc).w };
+      if (!e.mips) { e.mips = bsMips(e.img); e.luma = bsLuma(e.mips[e.mips.length - 1]); }
+      return { mips: e.mips, scale: e.img.width / bsSceneSize(sc).w, light: e.luma != null && e.luma > 0.6 };
     }
     return bsFloor(sc);
   }
   drawBackground(sc, w, h) {
     const { ctx, dpr, cam } = this, src = this.bgSource(sc);
     const vr = this.viewRect(), x0 = Math.max(0, vr.x), y0 = Math.max(0, vr.y), x1 = Math.min(w, vr.x + vr.w), y1 = Math.min(h, vr.y + vr.h);
+    this._lightFloor = !!(src && src.light);
     ctx.save(); ctx.setTransform(dpr * cam.z, 0, 0, dpr * cam.z, dpr * cam.x, dpr * cam.y);
     if (!src) {
       ctx.fillStyle = '#171a22'; ctx.fillRect(0, 0, w, h);
@@ -651,50 +941,57 @@ class BattleView {
     }
     ctx.restore();
   }
+  /* The grid is its own overlay: one hairline per line (one device-aligned CSS pixel), ~10–14% white
+     on dark floors and a warm dark ink on light ones, scaled by the scene's grid opacity. */
   drawGrid(sc, w, h) {
     const g = bsGrid(sc); if (!g.show || g.opacity <= 0) return;
     const { ctx, cam, dpr } = this, s = g.size * cam.z;
-    const fade = bsClamp((s - 7) / 16, 0, 1) * g.opacity; if (fade <= 0.01) return;
+    const fade = bsClamp((s - 6) / 14, 0, 1); if (fade <= 0.01) return;
     const vr = this.viewRect();
     const x0 = Math.max(0, vr.x), x1 = Math.min(w, vr.x + vr.w), y0 = Math.max(0, vr.y), y1 = Math.min(h, vr.y + vr.h);
     if (x1 <= x0 || y1 <= y0) return;
-    const al = v => (Math.round(v * dpr) + 0.5) / dpr;
+    const lw = Math.max(1, Math.round(dpr)), off = (lw % 2) / 2, al = v => (Math.round(v * dpr) + off) / dpr;
     const [, ty0] = this.toScreen(0, y0), [, ty1] = this.toScreen(0, y1), [tx0] = this.toScreen(x0, 0), [tx1] = this.toScreen(x1, 0);
     ctx.beginPath();
     for (let k = Math.ceil((x0 - g.offsetX) / g.size); g.offsetX + k * g.size <= x1; k++) { const X = al(this.toScreen(g.offsetX + k * g.size, 0)[0]); ctx.moveTo(X, ty0); ctx.lineTo(X, ty1); }
     for (let k = Math.ceil((y0 - g.offsetY) / g.size); g.offsetY + k * g.size <= y1; k++) { const Y = al(this.toScreen(0, g.offsetY + k * g.size)[1]); ctx.moveTo(tx0, Y); ctx.lineTo(tx1, Y); }
-    ctx.lineWidth = 2 / dpr + 0.6; ctx.strokeStyle = `rgba(0,0,0,${0.5 * fade})`; ctx.stroke();
-    ctx.lineWidth = 1 / dpr; ctx.strokeStyle = `rgba(255,255,255,${0.26 * fade})`; ctx.stroke();
+    const op = bsClamp(g.opacity, 0, 1);
+    ctx.lineWidth = lw / dpr;
+    ctx.strokeStyle = this._lightFloor ? `rgba(58,38,18,${(0.1 + op * 0.3) * fade})` : `rgba(255,255,255,${(0.04 + op * 0.2) * fade})`;
+    ctx.stroke();
   }
+  /* One visual language for every template: tinted affected squares, a ~20% fill of the template
+     colour, a 1.5px stroke at 80%, a 6px origin handle. */
   drawTemplate(sc, d, selected, preview) {
-    const { ctx } = this, g = bsTpl(sc, d), col = d.color || '#f97316', z = this.cam.z;
+    const { ctx, dpr } = this, g = bsTpl(sc, d), col = d.color || '#f97316', z = this.cam.z;
     ctx.save();
-    // affected squares, then the true shape on top with a crisp edge
     const s = bsGrid(sc).size * z;
-    if (s >= 8) { ctx.fillStyle = bsRgba(col, 0.14); for (const [cx, cy] of bsTplCells(sc, g)) { const [X, Y] = this.toScreen(cx, cy); ctx.fillRect(X + 1, Y + 1, s - 2, s - 2); } }
+    if (s >= 6) {
+      const al = v => Math.round(v * dpr) / dpr;
+      ctx.beginPath();
+      for (const [cx, cy] of bsTplCellsCached(sc, d, g)) { const [X, Y] = this.toScreen(cx, cy), X0 = al(X), Y0 = al(Y); ctx.rect(X0, Y0, al(X + s) - X0, al(Y + s) - Y0); }
+      ctx.fillStyle = bsRgba(col, 0.13); ctx.fill();
+    }
     const [ox, oy] = this.toScreen(g.o[0], g.o[1]);
     ctx.beginPath();
     if (g.r != null) ctx.arc(ox, oy, g.r * z, 0, BS_TAU);
     else g.poly.forEach((p, i) => { const [X, Y] = this.toScreen(p[0], p[1]); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
     ctx.closePath();
-    const gr = ctx.createRadialGradient(ox, oy, 0, ox, oy, Math.max(4, g.L * z));
-    gr.addColorStop(0, bsRgba(col, 0.42)); gr.addColorStop(1, bsRgba(col, 0.16));
-    ctx.fillStyle = gr; ctx.fill();
-    ctx.lineJoin = 'round'; ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.stroke();
-    ctx.lineWidth = 1.75; ctx.strokeStyle = col; ctx.stroke();
-    ctx.beginPath(); ctx.arc(ox, oy, 3.5, 0, BS_TAU); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = col; ctx.stroke();
+    ctx.fillStyle = bsRgba(col, 0.2); ctx.fill();
+    ctx.lineJoin = 'round'; ctx.lineWidth = 1.5; ctx.strokeStyle = bsRgba(col, 0.8); ctx.stroke();
+    ctx.beginPath(); ctx.arc(ox, oy, 3, 0, BS_TAU); ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.stroke();
     if (selected || preview) {
       const [ex, ey] = this.toScreen(g.e[0], g.e[1]);
-      if (selected && !this.player) { ctx.beginPath(); ctx.arc(ex, ey, 6, 0, BS_TAU); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = col; ctx.stroke(); }
-      const lx = g.r != null ? ox : (ox + ex) / 2, ly = g.r != null ? oy - g.r * z - 26 : (oy + ey) / 2 - 12;
-      bsPill(ctx, `${g.ft} ft ${BS_TPL_NAMES[g.shape] || ''}`, lx, ly, { size: this.player ? 18 : 12, dot: col });
+      if (selected && !this.player) { ctx.beginPath(); ctx.arc(ex, ey, 5.5, 0, BS_TAU); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = col; ctx.stroke(); }
+      const lx = g.r != null ? ox : (ox + ex) / 2, ly = g.r != null ? oy - g.r * z - (this.player ? 40 : 28) : (oy + ey) / 2 - (this.player ? 18 : 12);
+      bsPill(ctx, `${g.ft} ft ${BS_TPL_NAMES[g.shape] || ''}`, lx, ly, { size: this.player ? 18 : 12, dot: col, dpr });
     }
     ctx.restore();
   }
   drawShape(sc, d, selected) {
     const { ctx } = this, z = this.cam.z, p = (d.pts || []).map(q => this.toScreen(q[0], q[1]));
     if (!p.length) return;
-    const col = d.color || '#f8fafc', lw = Math.max(1, (d.width || 4) * z);
+    const col = d.color || '#f8fafc', lw = Math.max(1.25, (d.width || 4) * z);
     ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.beginPath();
     if (d.type === 'path') {
@@ -706,120 +1003,139 @@ class BattleView {
     else if (d.type === 'circle' && p[1]) ctx.arc(p[0][0], p[0][1], Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1]), 0, BS_TAU);
     if (d.fill && (d.type === 'rect' || d.type === 'circle')) { ctx.fillStyle = bsRgba(col, 0.2); ctx.fill(); }
     if (d.dmOnly && !this.player) ctx.setLineDash([lw * 2.2, lw * 1.8]);
-    ctx.lineWidth = lw + 2.5; ctx.strokeStyle = 'rgba(0,0,0,.28)'; ctx.stroke();
+    ctx.lineWidth = lw + 2.5; ctx.strokeStyle = 'rgba(0,0,0,.32)'; ctx.stroke();
     ctx.lineWidth = lw; ctx.strokeStyle = col; ctx.stroke();
     if (selected) { ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke(); }
     ctx.restore();
   }
   drawTokens(sc, now) {
-    const { ctx, dpr } = this, list = this.tokenList(), lbl = [];
+    const { ctx, dpr } = this, list = this.tokenList(), P = this.player, z = this.cam.z;
     let anim = this.tweens.size > 0;
     this.lastPos.clear();
+    const lbl = this._lbl = [], discs = this._discs = [];
     for (const e of list) {
-      const t = e.t, info = bsTokenInfo(t, this.enc, this.chars, this.turnId), [X, Y] = this.toScreen(e.x, e.y), R = e.r * this.cam.z;
-      this.lastPos.set(t.id, [e.x, e.y]);
-      if (X + R * 2 < 0 || Y + R * 2 < 0 || X - R * 2 > this.W || Y - R * 3 > this.H) continue;
-      const ringCol = BS_KINDS[info.kind].ring, hidden = !!t.hidden;
+      const t = e.t; this.lastPos.set(t.id, [e.bx, e.by]);
+      const [X, Y] = this.toScreen(e.x, e.y), R = e.r * z;
+      if (X + R * 2 < 0 || Y + R * 2 < 0 || X - R * 2 > this.W || Y - R * 2 > this.H) continue;
+      const info = bsTokenInfo(t, this.enc, this.chars, this.turnId), hidden = !!t.hidden;
+      const side = info.down ? '#7b818c' : BS_KINDS[info.kind].ring, ring = bsClamp(R * 0.055, 1.75, 4.5);
+      const sel = !P && this.sel.has(t.id), hov = !P && this.hover === t.id, focus = sel || hov || e.dragging || info.turn;
+      const dR = R + (info.num && R >= 9 ? 3 : 1); // keep labels clear of the disc and its badge
+      discs.push({ X, Y, R: dR });
       ctx.save();
       if (hidden) ctx.globalAlpha = 0.5;
-      const lift = e.dragging ? 1.12 : 1;
-      ctx.drawImage(bsShadow(), X - R * 1.3, Y - R * 1.3 + R * 0.16 * lift, R * 2.6, R * 2.6 * lift);
+      // lifted off the floor; higher while carried
+      const sh = bsShadowSprite(), lift = e.dragging ? 1 : 0, ss = 2.56 * R * (1 + lift * 0.1);
+      ctx.save(); ctx.globalAlpha *= lift ? 0.42 : 0.6; ctx.drawImage(sh, X - ss / 2, Y - ss / 2 + R * (0.045 + lift * 0.12), ss, ss); ctx.restore();
       if (info.turn && !info.down) {
-        // pulse for a few seconds when the turn arrives, then hold still (no redraws while idle)
-        const live = now - (this.turnSince || 0) < 8000;
-        const pulse = live ? 0.5 + 0.5 * Math.sin(now / 420) : 0.6;
-        ctx.save(); ctx.shadowColor = 'rgba(242,193,94,.95)'; ctx.shadowBlur = R * (0.5 + 0.35 * pulse) + 6;
-        ctx.beginPath(); ctx.arc(X, Y, R, 0, BS_TAU); ctx.fillStyle = '#f2c15e'; ctx.fill(); ctx.restore();
-        ctx.save(); ctx.beginPath(); ctx.arc(X, Y, R + Math.max(5, R * 0.16), 0, BS_TAU); ctx.setLineDash([Math.max(4, R * 0.22), Math.max(3, R * 0.14)]);
-        ctx.lineDashOffset = live ? -now / 60 : 0; ctx.lineWidth = Math.max(1.5, R * 0.05); ctx.strokeStyle = 'rgba(242,193,94,.9)'; ctx.stroke(); ctx.restore();
+        // breathe for a few seconds when the turn arrives, then hold still (no redraws while idle)
+        const live = now - (this.turnSince || 0) < 8000, pulse = live ? 0.5 + 0.5 * Math.sin(now / 420) : 0.55;
+        const gs = R * 2 * 1.95 * (1 + 0.05 * pulse);
+        ctx.save(); ctx.globalAlpha *= 0.72 + 0.28 * pulse; ctx.globalCompositeOperation = 'lighter';
+        ctx.drawImage(bsGlowSprite(), X - gs / 2, Y - gs / 2, gs, gs); ctx.restore();
         if (live) anim = true;
       }
-      const px = bsBucket(R * 2 * dpr);
-      const sp = bsSprite(info, px, this._redraw);
-      const ring = bsClamp(R * 0.11, 1.5, 7);
-      ctx.drawImage(sp, X - R + ring * 0.5, Y - R + ring * 0.5, R * 2 - ring, R * 2 - ring);
-      ctx.beginPath(); ctx.arc(X, Y, R - ring / 2, 0, BS_TAU); ctx.lineWidth = ring;
-      ctx.strokeStyle = bsRingStyle(ctx, X, Y, R, info.down ? '#6b7280' : ringCol); ctx.stroke();
-      ctx.beginPath(); ctx.arc(X, Y, R, 0, BS_TAU); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.stroke();
-      ctx.beginPath(); ctx.arc(X, Y, R - ring + 0.5, 0, BS_TAU); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.stroke();
+      const sp = bsSprite(info, bsBucket(R * 2 * dpr), this._redraw), ar = R - ring * 0.5;
+      ctx.drawImage(sp, X - ar, Y - ar, ar * 2, ar * 2);
+      bsBezel(ctx, X, Y, R, ring, side);
       if (hidden) { ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(X, Y, R + 3, 0, BS_TAU); ctx.setLineDash([4, 4]); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.stroke(); ctx.setLineDash([]); }
-      if (info.bloodied && this.player) { ctx.beginPath(); ctx.arc(X, Y, R - ring - 1, Math.PI * 0.15, Math.PI * 0.85); ctx.lineWidth = Math.max(2, R * 0.08); ctx.strokeStyle = 'rgba(214,40,40,.75)'; ctx.stroke(); }
-      if (!this.player && info.hp) {
-        // HP arc, DM only: a thin gauge just outside the ring, clockwise from twelve o'clock
-        const f = bsClamp(info.hp.hp / info.hp.max, 0, 1), lw = bsClamp(R * 0.065, 2, 3.5), rr = R + 2.5 + lw / 2;
-        ctx.beginPath(); ctx.arc(X, Y, rr, 0, BS_TAU); ctx.lineWidth = lw + 2; ctx.strokeStyle = 'rgba(8,10,14,.72)'; ctx.stroke();
-        if (f > 0) { ctx.beginPath(); ctx.arc(X, Y, rr, -Math.PI / 2, -Math.PI / 2 + BS_TAU * f); ctx.lineWidth = lw; ctx.lineCap = f < 1 ? 'round' : 'butt'; ctx.strokeStyle = f > 0.5 ? '#5ee39a' : f > 0.25 ? '#f5b942' : '#f05252'; ctx.stroke(); ctx.lineCap = 'butt'; }
+      if (R >= 9) {
+        if (!P && info.hp) { const f = bsClamp(info.hp.hp / info.hp.max, 0, 1); if (f < 1 || sel || hov) bsHpArc(ctx, X, Y, R - ring, R, f); }
+        else if (P && info.bloodied) bsHpArc(ctx, X, Y, R - ring, R, null);
       }
-      if (info.down) bsCross(ctx, X, Y, R * 0.5, Math.max(2, R * 0.12));
-      if (this.sel.has(t.id) && !this.player) {
-        ctx.beginPath(); ctx.arc(X, Y, R + (info.hp ? 9 : 4) + 2, 0, BS_TAU); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
-        ctx.beginPath(); ctx.arc(X, Y, R + (info.hp ? 9 : 4) + 5, 0, BS_TAU); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(127,209,201,.35)'; ctx.stroke();
-      } else if (this.hover === t.id && !this.player) {
-        ctx.beginPath(); ctx.arc(X, Y, R + (info.hp ? 9 : 4) + 2, 0, BS_TAU); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.stroke();
-      }
+      if (info.down) bsCross(ctx, X, Y, R * 0.45, Math.max(2, R * 0.11));
+      if (sel) {
+        ctx.beginPath(); ctx.arc(X, Y, R + 3, 0, BS_TAU); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+        ctx.beginPath(); ctx.arc(X, Y, R + 5.5, 0, BS_TAU); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(127,209,201,.42)'; ctx.stroke();
+      } else if (hov) { ctx.beginPath(); ctx.arc(X, Y, R + 2.5, 0, BS_TAU); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.stroke(); }
       if (info.num && R >= 9) {
-        const br = bsClamp(R * 0.3, 7, 13), bx = X + R * 0.72, by = Y + R * 0.72;
-        ctx.beginPath(); ctx.arc(bx, by, br, 0, BS_TAU); ctx.fillStyle = '#10131a'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = ringCol; ctx.stroke();
-        ctx.font = `700 ${Math.round(br * 1.15)}px Inter, -apple-system, sans-serif`; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(info.num, bx, by + 0.5);
+        const br = bsClamp(R * 0.26, 6.5, 11), bx = X + R * 0.72, by = Y - R * 0.72;
+        ctx.beginPath(); ctx.arc(bx, by, br, 0, BS_TAU); ctx.fillStyle = '#0f1218'; ctx.fill(); ctx.lineWidth = 1.25; ctx.strokeStyle = side; ctx.stroke();
+        ctx.font = `700 ${Math.round(br * 1.2)}px Inter, -apple-system, sans-serif`; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(info.num, bx, by + 0.5);
       }
       if (hidden) {
-        const bx = X + R * 0.72, by = Y - R * 0.72, br = bsClamp(R * 0.28, 7, 12);
+        const bx = X - R * 0.72, by = Y - R * 0.72, br = bsClamp(R * 0.26, 6.5, 11);
         ctx.beginPath(); ctx.arc(bx, by, br, 0, BS_TAU); ctx.fillStyle = '#10131a'; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.stroke();
         ctx.beginPath(); ctx.moveTo(bx - br * 0.55, by + br * 0.55); ctx.lineTo(bx + br * 0.55, by - br * 0.55); ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
         ctx.beginPath(); ctx.ellipse(bx, by, br * 0.55, br * 0.32, 0, 0, BS_TAU); ctx.lineWidth = 1.2; ctx.stroke();
       }
       ctx.restore();
-      const focus = this.sel.has(t.id) || this.hover === t.id || e.dragging || info.turn;
-      if (R >= 9 && (R >= (this.player ? 24 : 21) || (focus && !this.player))) lbl.push({ text: info.name, X, R, focus, top: Y + R + (info.hp && !this.player ? 8 : 5), kind: info.kind, dim: info.down || hidden, turn: info.turn });
-    }
-    // name pills last so neighbours never cover them
-    const fs = this.player ? 17 : 11.5;
-    for (const l of lbl) {
-      ctx.save(); if (l.dim) ctx.globalAlpha = 0.6;
-      bsPill(ctx, l.text, l.X, l.top, { size: fs, dot: BS_KINDS[l.kind].ring, border: l.turn ? 'rgba(242,193,94,.8)' : undefined, max: l.focus ? 0 : Math.max(l.R * 2.4, fs * 6) });
-      ctx.restore();
+      const want = P ? info.turn && !hidden : focus || (this.labels === 'all' && R >= 18);
+      if (want && R >= 6) lbl.push({ text: info.name, X, Y, R: dR + (sel ? 5 : hov ? 2 : 0), dot: BS_KINDS[info.kind].ring, turn: info.turn, focus, dim: info.down || hidden, pri: info.turn ? 4 : e.dragging ? 3 : sel ? 2 : hov ? 1 : 0 });
     }
     return anim;
   }
-  hatch() {
-    if (this._hatch) return this._hatch;
-    const c = bsCanvas(10, 10), x = c.getContext('2d');
-    x.fillStyle = 'rgba(6,8,14,.58)'; x.fillRect(0, 0, 10, 10);
-    x.strokeStyle = 'rgba(160,175,210,.22)'; x.lineWidth = 1;
-    x.beginPath(); x.moveTo(-2, 12); x.lineTo(12, -2); x.moveTo(-2, 2); x.lineTo(2, -2); x.moveTo(8, 12); x.lineTo(12, 8); x.stroke();
-    return (this._hatch = this.ctx.createPattern(c, 'repeat'));
+  /* Name labels, placed so they never sit on a token or on each other: below, above, right, left;
+     then the same with the name cut to ~96px; then further out. A passive label ('all' mode) that
+     still does not fit is left out; a focused one always shows. */
+  drawLabels() {
+    const L = this._lbl; if (!L || !L.length) return;
+    const { ctx, dpr } = this, P = this.player, fs = P ? bsClamp(Math.round(this.H * 0.021), 18, 36) : 12;
+    const discs = this._discs || [], placed = [], gapP = 3, sf = this.safe || {};
+    const bx0 = (sf.l || 0) + 4, by0 = (sf.t || 0) + 4, bx1 = this.W - (sf.r || 0) - 4, by1 = this.H - (sf.b || 0) - 4;
+    const hits = r => {
+      if (r.x < bx0 || r.y < by0 || r.x + r.w > bx1 || r.y + r.h > by1) return true;
+      for (const d of discs) { const cx = bsClamp(d.X, r.x, r.x + r.w), cy = bsClamp(d.Y, r.y, r.y + r.h); if ((d.X - cx) ** 2 + (d.Y - cy) ** 2 < (d.R + 1) ** 2) return true; }
+      for (const p of placed) if (r.x < p.x + p.w + gapP && p.x < r.x + r.w + gapP && r.y < p.y + p.h + gapP && p.y < r.y + r.h + gapP) return true;
+      return false;
+    };
+    L.sort((a, b) => b.pri - a.pri);
+    for (const l of L) {
+      const opt = { size: fs, dot: l.dot, weight: P ? 700 : 600, border: l.turn ? 'rgba(242,193,94,.85)' : undefined, borderW: l.turn && P ? 1.5 : 1, bg: P ? 'rgba(10,12,18,.88)' : undefined, dpr };
+      const g = P ? 6 : 4, full = bsPillMeasure(ctx, l.text, opt), cut = bsPillMeasure(ctx, l.text, { ...opt, maxW: 96 * fs / 12 });
+      const spots = (m, far) => [
+        [l.X - m.w / 2, l.Y + l.R + g + far * (m.h + 3)], [l.X - m.w / 2, l.Y - l.R - g - m.h - far * (m.h + 3)],
+        [l.X + l.R + g + far * 8, l.Y - m.h / 2], [l.X - l.R - g - m.w - far * 8, l.Y - m.h / 2]];
+      let best = null;
+      for (const [m, far] of cut.w < full.w ? [[full, 0], [cut, 0], [cut, 1], [cut, 2]] : [[full, 0], [full, 1], [full, 2]]) {
+        for (const [x, y] of spots(m, far)) { const r = { x, y, w: m.w, h: m.h }; if (!hits(r)) { best = { r, m }; break; } }
+        if (best) break;
+      }
+      if (!best) { if (!l.focus) continue; const [x, y] = spots(cut, 0)[0]; best = { r: { x: bsClamp(x, bx0, bx1 - cut.w), y: bsClamp(y, by0, by1 - cut.h), w: cut.w, h: cut.h }, m: cut }; }
+      placed.push(best.r);
+      ctx.save(); if (l.dim) ctx.globalAlpha = 0.65;
+      bsPillDraw(ctx, best.m, best.r.x, best.r.y, opt);
+      ctx.restore();
+    }
   }
+  /* Fog: one cached mask per fog state, at most ~1.5k texels across. Each reveal (or hide) grows by
+     half the feather, then the mask is blurred, so a revealed area is fully clear inside and fades
+     to dark over ~20 scene px (16–24 px at 100%). The GM sees it as ~60% black, the TV as solid dark. */
   fogMask(sc, w, h) {
     if (this._fog.sig === this._fogSig && this._fog.canvas) return this._fog;
-    const k = Math.min(1, 2048 / Math.max(w, h)), c = this._fog.canvas || document.createElement('canvas');
-    c.width = Math.ceil(w * k); c.height = Math.ceil(h * k);
-    const x = c.getContext('2d'); x.setTransform(k, 0, 0, k, 0, 0);
-    x.globalCompositeOperation = 'source-over'; x.fillStyle = this.player ? '#05070b' : '#000'; x.fillRect(0, 0, w, h);
-    const feather = this.player ? bsGrid(sc).size * 0.22 * k : 0;
+    const F = bsClamp(bsGrid(sc).size * 0.2, 16, 24), k = Math.min(0.5, 1536 / Math.max(w, h));
+    const cw = Math.max(1, Math.ceil(w * k)), ch = Math.max(1, Math.ceil(h * k));
+    const c = bsCanvas(cw, ch), x = c.getContext('2d', { willReadFrequently: true });
+    x.setTransform(k, 0, 0, k, 0, 0);
+    x.fillStyle = '#000'; x.fillRect(0, 0, w, h);
+    x.lineJoin = 'round'; x.lineWidth = F; x.strokeStyle = '#000';
     for (const op of (sc.fog && sc.fog.reveals) || []) {
       if (!op.pts || op.pts.length < 3) continue;
       x.globalCompositeOperation = op.hide ? 'source-over' : 'destination-out';
-      if (feather) x.filter = `blur(${feather.toFixed(1)}px)`;
-      x.beginPath(); op.pts.forEach((p, i) => i ? x.lineTo(p[0], p[1]) : x.moveTo(p[0], p[1])); x.closePath(); x.fill();
-      x.filter = 'none';
+      x.beginPath(); op.pts.forEach((p, i) => i ? x.lineTo(p[0], p[1]) : x.moveTo(p[0], p[1])); x.closePath(); x.fill(); x.stroke();
     }
-    this._fog = { sig: this._fogSig, canvas: c, k };
+    x.setTransform(1, 0, 0, 1, 0, 0); x.globalCompositeOperation = 'source-over';
+    try {
+      const img = x.getImageData(0, 0, cw, ch), d = img.data, a = new Float32Array(cw * ch);
+      for (let i = 0; i < a.length; i++) a[i] = d[i * 4 + 3];
+      const r = Math.max(1, Math.round(F * k / 2.56 - 0.5));
+      for (let p = 0; p < 3; p++) bsBoxBlur(a, cw, ch, r);
+      const col = this.player ? [5, 7, 11] : [3, 4, 8];
+      for (let i = 0; i < a.length; i++) { d[i * 4] = col[0]; d[i * 4 + 1] = col[1]; d[i * 4 + 2] = col[2]; d[i * 4 + 3] = a[i]; }
+      x.putImageData(img, 0, 0);
+    } catch (_) { /* no pixel access: a hard-edged mask still works */ }
+    // hand the per-frame drawImage a plain (GPU-friendly) canvas, not the read-back one
+    const out = bsCanvas(cw, ch); out.getContext('2d').drawImage(c, 0, 0);
+    this._fog = { sig: this._fogSig, canvas: out, k };
     return this._fog;
   }
   drawFog(sc, w, h) {
     if (!sc.fog || !sc.fog.on) return;
     const { ctx, dpr, cam } = this, m = this.fogMask(sc, w, h), s = dpr * cam.z / m.k;
-    if (this.player) {
-      ctx.save(); ctx.setTransform(s, 0, 0, s, dpr * cam.x, dpr * cam.y); ctx.imageSmoothingEnabled = true; ctx.drawImage(m.canvas, 0, 0); ctx.restore();
-      return;
-    }
-    if (!this._tmp) this._tmp = document.createElement('canvas');
-    const t = this._tmp; if (t.width !== this.cv.width || t.height !== this.cv.height) { t.width = this.cv.width; t.height = this.cv.height; }
-    const x = t.getContext('2d');
-    x.setTransform(1, 0, 0, 1, 0, 0); x.globalCompositeOperation = 'source-over'; x.clearRect(0, 0, t.width, t.height);
-    x.setTransform(s, 0, 0, s, dpr * cam.x, dpr * cam.y); x.drawImage(m.canvas, 0, 0);
-    x.setTransform(dpr, 0, 0, dpr, 0, 0); x.globalCompositeOperation = 'source-in'; x.fillStyle = this.hatch(); x.fillRect(0, 0, this.W, this.H);
-    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(t, 0, 0); ctx.restore();
+    ctx.save(); ctx.setTransform(s, 0, 0, s, dpr * cam.x, dpr * cam.y); ctx.imageSmoothingEnabled = true;
+    if (!this.player) ctx.globalAlpha = 0.6;
+    ctx.drawImage(m.canvas, 0, 0);
+    ctx.restore();
   }
   drawOverlays(sc, now) {
     const { ctx } = this, L = this.live; let anim = false;
@@ -853,7 +1169,7 @@ class BattleView {
         ctx.setLineDash([]);
         if (L.drag.snap) { ctx.beginPath(); ctx.arc(bx, by, R, 0, BS_TAU); ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.setLineDash([2, 4]); ctx.stroke(); ctx.setLineDash([]); }
         const ft = bsFeet(sc, from, tgt, this.rule);
-        if (ft > 0 && id === L.drag.lead) { const [cx, cy] = this.toScreen(cur[0], cur[1]); bsPill(ctx, `${ft} ft`, cx, cy - R - (this.player ? 40 : 30), { size: this.player ? 20 : 13, weight: 700, bg: 'rgba(12,14,20,.9)' }); }
+        if (ft > 0 && id === L.drag.lead) { const [cx, cy] = this.toScreen(cur[0], cur[1]); bsPill(ctx, `${ft} ft`, cx, cy - R - (this.player ? 40 : 30), { size: this.player ? 20 : 13, weight: 700, bg: 'rgba(12,14,20,.9)', dpr: this.dpr }); }
         ctx.restore();
       }
     }
@@ -865,7 +1181,7 @@ class BattleView {
       ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.stroke(); ctx.lineWidth = 2.5; ctx.strokeStyle = '#7fd1c9'; ctx.stroke();
       for (const [X, Y] of [[ax, ay], [bx, by]]) { ctx.beginPath(); ctx.arc(X, Y, 5, 0, BS_TAU); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#7fd1c9'; ctx.stroke(); }
       const ft = bsFeet(sc, r.a, r.b, this.rule);
-      bsPill(ctx, `${ft} ft`, bx + (this.player ? 0 : 0), by - (this.player ? 56 : 38), { size: this.player ? 24 : 14, weight: 700, bg: 'rgba(12,14,20,.92)', border: 'rgba(127,209,201,.6)' });
+      bsPill(ctx, `${ft} ft`, bx, by - (this.player ? 56 : 38), { size: this.player ? 24 : 14, weight: 700, bg: 'rgba(12,14,20,.92)', border: 'rgba(127,209,201,.6)', dpr: this.dpr });
       ctx.restore();
     }
     if (this.pings.length) {
@@ -886,5 +1202,21 @@ class BattleView {
       this.pings = keep; anim = anim || keep.length > 0;
     }
     return anim;
+  }
+}
+// in-place box blur of a w×h float array, clamped at the edges (three passes ≈ a gaussian)
+function bsBoxBlur(a, w, h, r) {
+  const n = 2 * r + 1, tmp = new Float32Array(Math.max(w, h));
+  for (let y = 0; y < h; y++) {
+    const o = y * w; let acc = 0;
+    for (let i = -r; i <= r; i++) acc += a[o + bsClamp(i, 0, w - 1)];
+    for (let x = 0; x < w; x++) { tmp[x] = acc / n; acc += a[o + Math.min(w - 1, x + r + 1)] - a[o + Math.max(0, x - r)]; }
+    for (let x = 0; x < w; x++) a[o + x] = tmp[x];
+  }
+  for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let i = -r; i <= r; i++) acc += a[bsClamp(i, 0, h - 1) * w + x];
+    for (let y = 0; y < h; y++) { tmp[y] = acc / n; acc += a[Math.min(h - 1, y + r + 1) * w + x] - a[Math.max(0, y - r) * w + x]; }
+    for (let y = 0; y < h; y++) a[y * w + x] = tmp[y];
   }
 }
