@@ -182,38 +182,202 @@ async function doLogin() {
 $('#logout').onclick = async () => { await api('/api/logout', { method: 'POST' }); location.reload(); };
 
 // ---------- main shell ----------
+/* Layout (style.css): a grouped sidebar (nav#tabs) that collapses to an icon rail on wide screens and is a drawer
+   under 900px, a top bar (header: page title, pin a panel, sync status, account menu), the page, and an optional
+   pinned panel (#rail). Ids other code relies on: #whoami, #live-dot, #logout, #pin-pick, #theme-toggle, .tab[data-tab]. */
+// shell icons (Lucide, ISC) that icons.js doesn't have
+Object.entries({
+  navmenu: '<line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" />',
+  sidebar: '<rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" />',
+  panelright: '<rect width="18" height="18" x="3" y="3" rx="2" /><path d="M15 3v18" />',
+  chev: '<path d="m6 9 6 6 6-6" />',
+  okcircle: '<circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" />',
+  alert: '<circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" />',
+  spinner: '<path d="M21 12a9 9 0 1 1-6.219-8.56" />',
+  help: '<circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" />'
+}).forEach(([k, v]) => { if (!ICONS[k]) ICONS[k] = v; });
+$$('#main [data-ic]').forEach(el => { el.outerHTML = ic(el.dataset.ic, el.className.replace(/\bic-slot\b/, '').trim()); });
+
+const NAV_MQ = matchMedia('(max-width: 899px)');
+const navNarrow = () => NAV_MQ.matches;
+const navLabel = t => { const b = $(`#tabs .tab[data-tab="${t}"]`); return b ? b.textContent.trim() : t; };
+function paintNavToggle() {
+  const b = $('#nav-toggle'), open = document.body.classList.contains('nav-open'), rail = document.body.classList.contains('nav-rail');
+  const label = navNarrow() ? (open ? 'Close menu' : 'Open menu') : (rail ? 'Expand sidebar' : 'Collapse sidebar');
+  b.setAttribute('aria-label', label); b.dataset.tip = navNarrow() ? label : `${label}  [`;
+  b.setAttribute('aria-expanded', String(navNarrow() ? open : !rail));
+}
+function navSetRail(on) {
+  document.body.classList.toggle('nav-rail', on);
+  try { localStorage.setItem('gc_nav', on ? 'rail' : 'full'); } catch (_) { /* private mode */ }
+  paintNavToggle();
+}
+function navDrawer(open) {
+  document.body.classList.toggle('nav-open', open);
+  $('#nav-scrim').hidden = !open;
+  paintNavToggle();
+  if (open) { const a = $('#tabs .tab.active') || $('#tabs .tab:not(.hidden)'); if (a) setTimeout(() => a.focus({ preventScroll: true }), 30); }
+}
+try { document.body.classList.toggle('nav-rail', localStorage.getItem('gc_nav') === 'rail'); } catch (_) { /* default: full */ }
+$('#nav-toggle').onclick = () => (navNarrow() ? navDrawer(!document.body.classList.contains('nav-open')) : navSetRail(!document.body.classList.contains('nav-rail')));
+$('#nav-scrim').onclick = () => navDrawer(false);
+NAV_MQ.addEventListener('change', () => { navDrawer(false); });
+paintNavToggle();
+
+/* Menus in the top bar (account, pin a panel): a button + a [role=menu] beside it. Arrow keys move, Esc closes. */
+function bindMenu(btn, menu, onOpen) {
+  const items = () => [...menu.querySelectorAll('.pop-item:not([disabled])')];
+  const away = e => { if (!menu.contains(e.target) && !btn.contains(e.target)) close(); };
+  function close(focusBtn) {
+    if (menu.hidden) return;
+    menu.hidden = true; btn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', away, true);
+    if (focusBtn) btn.focus();
+  }
+  function open() {
+    if (onOpen) onOpen(menu);
+    menu.hidden = false; btn.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', away, true);
+    const first = menu.querySelector('.pop-item.on') || items()[0]; if (first) first.focus({ preventScroll: true });
+  }
+  btn.addEventListener('click', () => (menu.hidden ? open() : close()));
+  btn.addEventListener('keydown', e => { if (e.key === 'ArrowDown' && menu.hidden) { e.preventDefault(); open(); } });
+  menu.addEventListener('keydown', e => {
+    const xs = items(), i = xs.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); (xs[i + 1] || xs[0]).focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); (xs[i - 1] || xs[xs.length - 1]).focus(); }
+    else if (e.key === 'Home') { e.preventDefault(); xs[0].focus(); }
+    else if (e.key === 'End') { e.preventDefault(); xs[xs.length - 1].focus(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); }
+    else if (e.key === 'Tab') close();
+  });
+  menu.addEventListener('click', e => { const it = e.target.closest('.pop-item'); if (it && !it.hasAttribute('data-keep')) close(); });
+  return { open, close };
+}
+bindMenu($('#acct-btn'), $('#acct-menu'));
+$('#acct-settings').onclick = () => { S.tab = 'settings'; S.view = null; localStorage.setItem('gc_tab', 'settings'); render(); };
+
+/* Pin a panel: a menu over the hidden #pin-pick select, which stays the source of truth (battlemap.js drives it too). */
+bindMenu($('#pin-btn'), $('#pin-menu'), menu => {
+  const pick = $('#pin-pick'), opts = [...pick.options].filter(o => o.value && !o.hidden);
+  menu.innerHTML = `<div class="pop-note">Keep a panel open beside every page</div>` +
+    opts.map(o => `<button class="pop-item ${o.value === S.pin ? 'on' : ''}" type="button" role="menuitemradio" aria-checked="${o.value === S.pin}" data-pin="${esc(o.value)}">${ic(TAB_ICONS[o.value])}<span>${esc(o.textContent)}</span>${o.value === S.pin ? ic('check', 'pop-check') : ''}</button>`).join('') +
+    (S.pin ? `<div class="pop-sep" role="separator"></div><button class="pop-item" type="button" role="menuitem" data-pin="">${ic('x')}<span>Unpin panel</span></button>` : '');
+  menu.querySelectorAll('[data-pin]').forEach(b => b.onclick = () => { pick.value = b.dataset.pin; pick.dispatchEvent(new Event('change')); });
+});
+function paintPin() {
+  const btn = $('#pin-btn'), on = !!(S.pin && RAIL_TABS[S.pin]);
+  $('#pin-lbl').textContent = on ? RAIL_TABS[S.pin] : 'Pin panel';
+  btn.classList.toggle('on', on);
+  btn.dataset.tip = on ? `${RAIL_TABS[S.pin]} is pinned beside every page` : 'Pin a panel beside every page';
+  btn.setAttribute('aria-label', on ? `Pinned panel: ${RAIL_TABS[S.pin]}` : 'Pin a panel');
+}
+
+/* Sync status: gh.js polls the data repo every few seconds and calls setLive(ok). Wrap it to remember when the
+   last check ran and whether it failed; #live-dot keeps its .on class (battlemap.js reads it). Click = check now. */
+const SYNC = { at: 0, ok: null, checking: false };
+const syncAgo = t => { const s = Math.max(0, Math.round((Date.now() - t) / 1000)); return s < 2 ? 'just now' : s < 60 ? `${s} s ago` : `${Math.round(s / 60)} min ago`; };
+const syncClock = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function syncTip() {
+  const every = typeof GH !== 'undefined' && GH.pollMs ? `${Math.round(GH.pollMs / 1000)} s` : 'few seconds';
+  if (SYNC.checking) return 'Checking for changes…';
+  if (SYNC.ok === null) return 'Connecting to the campaign data…';
+  if (SYNC.ok) return `Up to date. Last checked ${syncClock(SYNC.at)} (${syncAgo(SYNC.at)}).\nChecks every ${every}. Click to check now.`;
+  return `${navigator.onLine === false ? 'This device is offline. ' : ''}Last check failed at ${syncClock(SYNC.at)} (${syncAgo(SYNC.at)}).\nRetrying every ${every}. Click to try now.`;
+}
+function paintSync() {
+  const b = $('#sync'); if (!b) return;
+  const state = SYNC.checking ? 'checking' : SYNC.ok === null ? 'wait' : SYNC.ok ? 'ok' : 'fail';
+  const label = { checking: 'Checking…', wait: 'Connecting…', ok: 'Synced', fail: 'Not synced' }[state];
+  b.dataset.state = state; $('#sync-lbl').textContent = label;
+  b.setAttribute('aria-label', `${label}. ${syncTip().replace(/\n/g, ' ')}`);
+  tipRefresh(b);
+}
+if (typeof setLive === 'function') {
+  const baseSetLive = setLive;
+  setLive = function (on) { baseSetLive(on); SYNC.at = Date.now(); SYNC.ok = !!on; paintSync(); }; // eslint-disable-line no-global-assign
+}
+$('#sync').dataset.tip = '';
+$('#sync').onclick = async () => {
+  if (SYNC.checking || typeof poll !== 'function') return;
+  SYNC.checking = true; paintSync();
+  try { await poll(); } finally { SYNC.checking = false; paintSync(); }
+};
+addEventListener('online', paintSync); addEventListener('offline', paintSync);
+
+/* Tooltips: [data-tip] elements get a small label on hover / keyboard focus. Sidebar tabs only need one in the icon rail. */
+const TIP = { el: null, for: null, timer: 0, tick: 0, warm: 0 };
+function tipText(t) { return t.id === 'sync' ? syncTip() : (t.dataset.tip || ''); }
+function tipPlace() {
+  const t = TIP.for, el = TIP.el; if (!t || !el) return;
+  const r = t.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  if (t.closest('#tabs')) { el.style.left = (r.right + 10) + 'px'; el.style.top = Math.round(r.top + r.height / 2 - h / 2) + 'px'; }
+  else { el.style.left = Math.round(Math.max(8, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - 8))) + 'px'; el.style.top = (r.bottom + 8) + 'px'; }
+}
+function tipShow(t) {
+  const text = tipText(t); if (!text) return;
+  if (!TIP.el) { TIP.el = document.createElement('div'); TIP.el.className = 'tip'; TIP.el.setAttribute('role', 'tooltip'); document.body.appendChild(TIP.el); }
+  TIP.for = t; TIP.el.textContent = text; TIP.el.classList.add('on'); tipPlace();
+  clearInterval(TIP.tick); if (t.id === 'sync') TIP.tick = setInterval(() => tipRefresh(t), 1000);
+}
+function tipHide() { clearTimeout(TIP.timer); clearInterval(TIP.tick); if (TIP.el && TIP.for) { TIP.el.classList.remove('on'); TIP.warm = Date.now(); } TIP.for = null; }
+function tipRefresh(t) { if (TIP.for === t && TIP.el) { TIP.el.textContent = tipText(t); tipPlace(); } }
+function tipWanted(t) { return !(t.classList.contains('tab') && !(document.body.classList.contains('nav-rail') && !navNarrow())); }
+function tipEnter(e) {
+  const t = e.target.closest && e.target.closest('[data-tip]'); if (!t || t === TIP.for || !tipWanted(t)) return;
+  tipHide(); TIP.timer = setTimeout(() => tipShow(t), Date.now() - TIP.warm < 400 ? 0 : 450);
+}
+document.addEventListener('mouseover', tipEnter);
+document.addEventListener('focusin', e => { if (e.target.matches && e.target.matches(':focus-visible')) tipEnter(e); });
+document.addEventListener('mouseout', e => { const t = e.target.closest && e.target.closest('[data-tip]'); if (t && !t.contains(e.relatedTarget)) tipHide(); });
+document.addEventListener('focusout', tipHide);
+document.addEventListener('pointerdown', tipHide, true);
+addEventListener('scroll', tipHide, true);
+
 function showMain() {
   $('#login').classList.add('hidden');
   $('#main').classList.remove('hidden');
-  $('#whoami').textContent = S.me.name;
   const role = { player: 'Player', dm: 'DM', admin: 'Admin' }[S.me.role] || '';
-  $('#whoami').innerHTML = `${esc(S.me.name)} <span class="role-pill role-${esc(S.me.role)}">${role}</span>`;
-  // Only the tabs this person may open (the login server enforces the same list for players)
+  const name = shortName(S.me.name) || S.me.name || '';
+  $('#whoami').innerHTML = `<b>${esc(name)}</b><span class="role-pill role-${esc(S.me.role)}">${role}</span>`;
+  $('#acct-name').textContent = name;
+  $$('.acct-av').forEach(a => { a.textContent = (name.trim()[0] || '?').toUpperCase(); });
+  $('#acct-btn').setAttribute('aria-label', `Account: ${name}${role ? ', ' + role : ''}`);
+  // Only the tabs this person may open (the login server enforces the same list for players); a group with none left disappears
   const tabs = new Set(S.me.tabs || defaultTabs(S.me.role));
   $$('#tabs .tab').forEach(t => t.classList.toggle('hidden', t.dataset.tab !== 'settings' && !tabs.has(t.dataset.tab)));
+  $$('#tabs .nav-group').forEach(g => g.classList.toggle('hidden', !g.querySelector('.tab:not(.hidden)')));
   $$('#pin-pick option').forEach(o => { if (o.value) o.hidden = !tabs.has(o.value); });
+  $('#pin-btn').closest('.tb-menu-wrap').classList.toggle('hidden', !$$('#pin-pick option').some(o => o.value && !o.hidden));
   if (S.pin && !tabs.has(S.pin)) { S.pin = ''; localStorage.removeItem('gc_pin'); }
   S.tab = localStorage.getItem('gc_tab') || (isStaff(S.me) ? 'map' : 'party');
   if (S.tab !== 'settings' && !tabs.has(S.tab)) S.tab = ['party', 'map'].find(t => tabs.has(t)) || [...tabs][0] || 'settings';
+  paintPin();
   connectSSE();
   render();
 }
 $$('#tabs .tab').forEach(b => b.onclick = () => {
   S.tab = b.dataset.tab; S.view = null; S.formOpen = false;
   localStorage.setItem('gc_tab', S.tab);
+  if (navNarrow()) navDrawer(false);
   render();
 });
 $('#pin-pick').onchange = e => setPin(e.target.value);
 const TAB_ICONS = { map: 'map', chat: 'chat', party: 'users', battle: 'swords', battlemap: 'grid', dice: 'dice', journal: 'book', codex: 'scroll', quests: 'flag', board: 'pin', arc: 'route', notes: 'notebook', dm: 'crown', admin: 'shield', settings: 'settings' };
-$$('#tabs .tab').forEach(b => { const n = TAB_ICONS[b.dataset.tab]; if (n) b.innerHTML = ic(n) + `<span>${esc(b.textContent.trim())}</span>`; });
-// Keyboard: N = next turn when the Battle panel is showing, / = jump to the DM chat box, Esc = close the map side panel / leave a field
+$$('#tabs .tab').forEach(b => { const n = TAB_ICONS[b.dataset.tab], label = b.textContent.trim(); if (n) b.innerHTML = ic(n) + `<span>${esc(label)}</span>`; b.dataset.tip = label; });
+// Keyboard: N = next turn when the Battle panel is showing, / = jump to the DM chat box, [ = collapse / expand the sidebar,
+// Esc = close the menu drawer or the map side panel, or leave a field
 document.addEventListener('keydown', e => {
   const tag = (e.target && e.target.tagName || '').toUpperCase();
   const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (e.target && e.target.isContentEditable);
-  if (e.key === 'Escape') { const side = $('#map-side'); if (side && !side.classList.contains('hidden') && typeof closeSide === 'function') closeSide(); if (typing) e.target.blur(); return; }
+  if (e.key === 'Escape') {
+    if (document.body.classList.contains('nav-open')) { navDrawer(false); $('#nav-toggle').focus(); return; }
+    const side = $('#map-side'); if (side && !side.classList.contains('hidden') && typeof closeSide === 'function') closeSide(); if (typing) e.target.blur(); return;
+  }
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === 'n' || e.key === 'N') { const b = $('#b-next'); if (b) { e.preventDefault(); b.click(); } }
   else if (e.key === '/') { e.preventDefault(); const t = $('#chat-text'); if (t) t.focus(); else { S.tab = 'chat'; localStorage.setItem('gc_tab', 'chat'); render().then(() => { const x = $('#chat-text'); if (x) x.focus(); }); } }
+  else if (e.key === '[' && !navNarrow() && !$('#main').classList.contains('hidden')) { e.preventDefault(); navSetRail(!document.body.classList.contains('nav-rail')); }
 });
 
 // ---------- render dispatch ----------
@@ -248,7 +412,10 @@ async function renderInto(c, tab) {
   } catch (e) { c.innerHTML = `<p class="err">Failed to load: ${esc(e.message)}</p>`; }
 }
 async function renderOnce() {
-  $$('#tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === S.tab));
+  $$('#tabs .tab').forEach(b => { const on = b.dataset.tab === S.tab; b.classList.toggle('active', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+  const label = navLabel(S.tab);
+  $('#tb-title').innerHTML = `${ic(TAB_ICONS[S.tab] || 'pin')}<span>${esc(label)}</span>`;
+  document.title = `${label} · Goat Crew`;
   document.body.classList.toggle('tab-map', S.tab === 'map');
   document.body.classList.toggle('tab-battlemap', S.tab === 'battlemap');
   await syncRail(); // if the main tab is the pinned one, empty the rail first so element ids stay unique
@@ -266,10 +433,11 @@ async function syncRail(force) {
   rail.classList.toggle('hidden', !show);
   const pick = $('#pin-pick');
   if (pick && pick.value !== (S.pin || '')) pick.value = S.pin || '';
+  paintPin();
   if (!show) { if (rail.dataset.tab) { rail.innerHTML = ''; delete rail.dataset.tab; } return; }
   if (rail.dataset.tab === S.pin && !force) return; // keep the rail's state (chat draft, scroll) across main-tab switches
   rail.dataset.tab = S.pin;
-  rail.innerHTML = `<div class="rail-head"><b>${ic(TAB_ICONS[S.pin])} ${RAIL_TABS[S.pin]}</b><button class="btn small ghost" id="rail-unpin" title="Unpin this panel">${ic('x')} unpin</button></div><div class="rail-body"></div>`;
+  rail.innerHTML = `<div class="rail-head"><b>${ic(TAB_ICONS[S.pin])} ${RAIL_TABS[S.pin]}</b><button class="tb-btn tb-icon" id="rail-unpin" type="button" aria-label="Unpin this panel" data-tip="Unpin this panel">${ic('x')}</button></div><div class="rail-body"></div>`;
   $('#rail-unpin').onclick = () => setPin('');
   await renderInto(rail.querySelector('.rail-body'), S.pin);
 }

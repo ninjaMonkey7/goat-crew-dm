@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Goat Crew — DM screen</title>
 <meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#141822" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121214" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f7f5f1" media="(prefers-color-scheme: light)">
 <script>
 /* Theme, before first paint: localStorage gc_theme = system | light | dark → <html data-theme="light|dark">.
    On System it follows the OS live. Buttons with data-theme-set="…" and #theme-toggle drive it (see dm.css). */
 (function () {
   var KEY = 'gc_theme', root = document.documentElement, mem = 'system', timer;
-  var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null, BAR = { dark: '#141822', light: '#ffffff' };
+  var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null, BAR = { dark: '#121214', light: '#f7f5f1' };
   function pref() { var v; try { v = localStorage.getItem(KEY); } catch (_) { v = mem; } return v === 'light' || v === 'dark' ? v : 'system'; }
   function resolve(p) { return p === 'system' ? (mq && !mq.matches ? 'light' : 'dark') : p; }
   function sync() {
@@ -99,41 +99,75 @@
     </div>
   </div>
 
-  <!-- Main -->
+  <!-- Main: sidebar (nav#tabs, grouped) + top bar (header) + content + optional pinned panel (#rail).
+       Under 900px the sidebar is a drawer opened from the top bar. Element ids here are used by app.js, gh.js and battlemap.js. -->
   <div id="main" class="hidden">
     <header>
-      <span class="brand">🐐 Goat Crew</span>
-      <span id="whoami" class="muted"></span>
-      <span id="live-dot" title="Live connection to the data repo">●</span>
-      <button id="theme-toggle" class="btn small ghost icon-btn" type="button" title="Switch theme" aria-label="Switch theme"><svg class="ic ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-17.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><svg class="ic ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></button>
-      <button id="logout" class="btn small ghost">Log out</button>
+      <button id="nav-toggle" class="tb-btn tb-icon" type="button" aria-controls="tabs" aria-label="Collapse sidebar"><span class="ic-slot when-wide" data-ic="sidebar"></span><span class="ic-slot when-narrow" data-ic="navmenu"></span></button>
+      <div class="tb-title" id="tb-title"></div>
+      <div class="tb-right">
+        <div class="tb-menu-wrap">
+          <button id="pin-btn" class="tb-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="pin-menu"><span class="ic-slot" data-ic="panelright"></span><span class="tb-lbl" id="pin-lbl">Pin panel</span><span class="ic-slot tb-chev" data-ic="chev"></span></button>
+          <div id="pin-menu" class="pop" role="menu" aria-label="Pin a panel" hidden></div>
+          <select id="pin-pick" class="sr-only" tabindex="-1" aria-hidden="true" title="Pin a panel to the right of whatever tab you're on">
+            <option value="">Pin a panel…</option>
+            <option value="chat">DM Chat</option>
+            <option value="notes">My Notes</option>
+            <option value="battle">Battle</option>
+            <option value="dice">Dice</option>
+            <option value="party">Party</option>
+            <option value="map">Map</option>
+          </select>
+        </div>
+        <button id="sync" class="sync" type="button" data-state="wait" aria-label="Connecting"><span id="live-dot" aria-hidden="true"></span><span class="sync-lbl" id="sync-lbl">Connecting…</span></button>
+        <div class="tb-menu-wrap">
+          <button id="acct-btn" class="tb-btn acct-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu" aria-label="Account"><span class="acct-av" aria-hidden="true"></span><span class="tb-lbl acct-name" id="acct-name"></span><span class="ic-slot tb-chev" data-ic="chev"></span></button>
+          <div id="acct-menu" class="pop pop-right" role="menu" aria-label="Account" hidden>
+            <div class="acct-head"><span class="acct-av lg" aria-hidden="true"></span><span id="whoami"></span></div>
+            <div class="pop-sep" role="separator"></div>
+            <button id="theme-toggle" class="pop-item" type="button" role="menuitem" data-keep title="Switch theme" aria-label="Switch theme"><svg class="ic ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-17.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><svg class="ic ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><span>Dark theme</span><span class="switch" aria-hidden="true"></span></button>
+            <button id="acct-settings" class="pop-item" type="button" role="menuitem"><span class="ic-slot" data-ic="settings"></span><span>Settings</span></button>
+            <div class="pop-sep" role="separator"></div>
+            <button id="logout" class="pop-item" type="button" role="menuitem"><span class="ic-slot" data-ic="logout"></span><span>Log out</span></button>
+          </div>
+        </div>
+      </div>
     </header>
-    <nav id="tabs">
-      <button data-tab="map" class="tab">Map</button>
-      <button data-tab="chat" class="tab">DM Chat</button>
-      <button data-tab="party" class="tab">Party</button>
-      <button data-tab="battle" class="tab">Battle</button>
-      <button data-tab="battlemap" class="tab">Battle map</button>
-      <button data-tab="dice" class="tab">Dice</button>
-      <button data-tab="journal" class="tab">Journal</button>
-      <button data-tab="codex" class="tab">Codex</button>
-      <button data-tab="quests" class="tab">Quests</button>
-      <button data-tab="board" class="tab">Board</button>
-      <button data-tab="arc" class="tab dm-only hidden">Arc</button>
-      <button data-tab="notes" class="tab">My Notes</button>
-      <button data-tab="dm" class="tab dm-only hidden">DM</button>
-      <button data-tab="admin" class="tab admin-only hidden">Admin</button>
-      <button data-tab="settings" class="tab" title="Settings">Settings</button>
-      <select id="pin-pick" title="Pin a panel to the right of whatever tab you're on" aria-label="Pin a panel">
-        <option value="">Pin a panel…</option>
-        <option value="chat">DM Chat</option>
-        <option value="notes">My Notes</option>
-        <option value="battle">Battle</option>
-        <option value="dice">Dice</option>
-        <option value="party">Party</option>
-        <option value="map">Map</option>
-      </select>
+    <nav id="tabs" aria-label="Sections">
+      <div class="nav-head"><span class="brand"><span class="brand-mark" aria-hidden="true">🐐</span><span class="brand-name">Goat Crew</span></span></div>
+      <div class="nav-body">
+        <div class="nav-group" data-group="play" role="group" aria-labelledby="ng-play">
+          <div class="nav-label" id="ng-play"><span>Play</span></div>
+          <button data-tab="map" class="tab">Map</button>
+          <button data-tab="battle" class="tab">Battle</button>
+          <button data-tab="battlemap" class="tab">Battle map</button>
+          <button data-tab="party" class="tab">Party</button>
+          <button data-tab="dice" class="tab">Dice</button>
+        </div>
+        <div class="nav-group" data-group="story" role="group" aria-labelledby="ng-story">
+          <div class="nav-label" id="ng-story"><span>Story</span></div>
+          <button data-tab="journal" class="tab">Journal</button>
+          <button data-tab="codex" class="tab">Codex</button>
+          <button data-tab="quests" class="tab">Quests</button>
+          <button data-tab="board" class="tab">Board</button>
+          <button data-tab="notes" class="tab">My Notes</button>
+        </div>
+        <div class="nav-group" data-group="dm" role="group" aria-labelledby="ng-dm">
+          <div class="nav-label" id="ng-dm" title="Only DMs see this group"><span>DM</span><span class="ic-slot" data-ic="eyeoff"></span></div>
+          <button data-tab="chat" class="tab">DM Chat</button>
+          <button data-tab="arc" class="tab dm-only hidden">Arc</button>
+          <button data-tab="dm" class="tab dm-only hidden" title="Encounter tracker, session prep, users, activity">Prep &amp; tools</button>
+        </div>
+        <div class="nav-group" data-group="admin" role="group" aria-labelledby="ng-admin">
+          <div class="nav-label" id="ng-admin"><span>Admin</span></div>
+          <button data-tab="admin" class="tab admin-only hidden">People &amp; access</button>
+        </div>
+      </div>
+      <div class="nav-foot">
+        <button data-tab="settings" class="tab">Settings</button>
+      </div>
     </nav>
+    <div id="nav-scrim" hidden></div>
     <main id="content"></main>
     <aside id="rail" class="hidden"></aside>
   </div>
