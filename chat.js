@@ -119,9 +119,10 @@ function apiErr(txt, status) {
 
 // ---------- the chat tab ----------
 /* Layout: the thread scrolls with the page (or the side rail); a sticky dock at the bottom holds the
-   quick-ask row ("Remind me about" menu, then one-tap chips; scrolls sideways) and the composer. The composer has
-   one send action and one recipient control, "To: Co-DM / Assistant". Keys (shown in the hint): Enter sends to
-   whoever is selected (Co-DM by default), Ctrl/⌘ + Enter asks the assistant, Shift + Enter is a new line. */
+   quick-ask row ("Remind me about" menu, then one-tap chips; scrolls sideways under a fade and an arrow button on
+   whichever edge has more) and the composer. The composer has one send action and one recipient control,
+   "To: Co-DM / Assistant". Enter sends to whoever is selected, Shift + Enter is a new line (the hint shows while the box
+   has focus). Ctrl/⌘ + Enter asks the assistant whatever To says: a power shortcut, listed under Settings only. */
 const CHAT = { mode: 'dm', draft: '' };
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 const chatScroller = () => { const log = $('#chat-log'); return (log && log.closest('#rail')) || document.scrollingElement; };
@@ -137,7 +138,9 @@ async function renderChat(c) {
     <div class="chat-wrap">
       <div id="chat-log" class="chat-log" aria-live="polite"></div>
       <div class="chat-dock">
-        <div class="chat-quick-wrap"><div class="chat-quick" role="toolbar" aria-label="Ask the assistant">
+        <div class="chat-quick-wrap">
+          <button type="button" class="chat-quick-arrow l" data-dir="-1" tabindex="-1" aria-hidden="true">${ic('chevleft')}</button>
+          <div class="chat-quick" role="toolbar" aria-label="Ask the assistant">
           <button class="chat-chip chat-menu-btn" id="chat-who" aria-haspopup="listbox" aria-expanded="false" title="Pick a PC or NPC: who they are, what they want, two hooks">${ic('brain')} Remind me about ${ic('chev', 'chip-chev')}</button>
           <span class="chat-quick-sep" aria-hidden="true"></span>
           <button class="chat-chip" data-q="catchup" title="Where are we, what's open, what to remember">${ic('compass')} Catch me up</button>
@@ -145,7 +148,9 @@ async function renderChat(c) {
           <button class="chat-chip" data-q="encounter">${ic('swords')} Encounter idea</button>
           <button class="chat-chip" data-q="npc">${ic('drama')} NPC on the spot</button>
           <button class="chat-chip" data-q="recap">${ic('scroll')} Recap so far</button>
-        </div></div>
+          </div>
+          <button type="button" class="chat-quick-arrow r" data-dir="1" tabindex="-1" aria-hidden="true">${ic('chevright')}</button>
+        </div>
         <div class="composer" data-mode="${CHAT.mode}">
           <textarea id="chat-text" rows="1" aria-label="Message" aria-describedby="chat-hint"></textarea>
           <div class="composer-bar">
@@ -157,7 +162,7 @@ async function renderChat(c) {
             <span class="composer-hint" id="chat-hint"></span>
             ${streaming
               ? `<button class="composer-send stop" id="chat-stop" title="Stop the answer" aria-label="Stop the answer">${ic('square')}</button>`
-              : `<button class="composer-send" id="chat-send" aria-label="Send" ${CHAT.draft.trim() ? '' : 'disabled'}>${ic('send')}</button>`}
+              : `<button class="composer-send" id="chat-send" aria-label="Send" ${CHAT.draft.trim() ? '' : 'disabled'}>${ic('arrowup')}</button>`}
           </div>
         </div>
       </div>
@@ -171,9 +176,10 @@ async function renderChat(c) {
     box.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.mode === CHAT.mode)));
     ta.placeholder = ai ? 'Ask the assistant about the campaign…' : 'Message your co-DM…';
     const k = s => `<span class="kbd">${s}</span>`, sep = '<i aria-hidden="true">·</i>';
-    hint.innerHTML = ai
-      ? (AI.ready ? `${k('Enter')} ask${sep}${k('Shift Enter')} new line${sep}both DMs see the answer` : 'The assistant needs a key: see Settings')
-      : `${k('Enter')} send${sep}${k(MAC ? '⌘ Enter' : 'Ctrl Enter')} ask the assistant${sep}${k('Shift Enter')} new line`;
+    const nokey = ai && !AI.ready;
+    hint.classList.toggle('warn', nokey); // the one hint that shows without focus
+    hint.innerHTML = nokey ? 'The assistant needs a key: add one in Settings'
+      : `${k('Enter')} ${ai ? 'to ask' : 'to send'}${sep}${k('Shift Enter')} for a new line${ai ? `${sep}both DMs see the answer` : ''}`;
     if (send) { send.disabled = !ta.value.trim(); send.title = ai ? `Ask the assistant (Enter)` : `Send to your co-DM (Enter)`; send.setAttribute('aria-label', send.title); }
   };
   ta.value = CHAT.draft; grow(); sync();
@@ -195,6 +201,8 @@ async function renderChat(c) {
   const row = c.querySelector('.chat-quick'), rowWrap = c.querySelector('.chat-quick-wrap');
   const fades = () => { rowWrap.classList.toggle('fade-l', row.scrollLeft > 2); rowWrap.classList.toggle('fade-r', row.scrollLeft + row.clientWidth < row.scrollWidth - 2); };
   row.addEventListener('scroll', fades, { passive: true }); requestAnimationFrame(fades);
+  if (window.ResizeObserver) new ResizeObserver(fades).observe(row); // the rail opening, the window resizing, fonts arriving
+  rowWrap.querySelectorAll('.chat-quick-arrow').forEach(b => b.onclick = () => row.scrollBy({ left: Number(b.dataset.dir) * Math.max(120, row.clientWidth * 0.7), behavior: 'smooth' }));
   $('#chat-who').onclick = e => { e.stopPropagation(); chatPeopleMenu($('#chat-who'), people, p => askAssistant(`Remind me about ${p.name}.`, `🧠 Remind me about ${p.name}`)); };
   if ($('#chat-stop')) $('#chat-stop').onclick = () => streaming && streaming.controller.abort();
 }
@@ -408,9 +416,13 @@ ${tracker}`;
 /* One 640px column of sections, each a card of rows (label + help on the left, control on the right). Plain words
    in the rows; the technical detail lives in the "How to" disclosures. Theme, assistant key, model and effort save as
    you change them (with a toast). Anything that reloads the page or signs you in again keeps an explicit button.
+   The page title is the top bar's (like every root page); the page opens with a one-line lead instead of a heading.
+   Status pills: green when set, amber "Not set" for optional things (the assistant key), red only for errors.
    Players see Appearance, Your account and Tips. Dropdowns are custom 32px selects over the native <select>, which
    stays the source of truth (its change handlers below are unchanged). */
 const stPill = (ok, yes = 'Set', no = 'Missing') => `<span class="st-pill ${ok ? 'ok' : 'no'}">${ok ? yes : no}</span>`;
+// an optional key that isn't there yet: amber, with a link that opens the how-to and puts the cursor in the box
+const stUnset = (label, link) => `<span class="st-pill warn">${label}</span>${link ? `<button type="button" class="st-link" id="st-aikey-add">${link}</button>` : ''}`;
 const stRow = (label, help, ctl, cls = '') => `<div class="st-row ${cls}"><div class="st-lbl"><b>${label}</b>${help ? `<span>${help}</span>` : ''}</div>${ctl ? `<div class="st-ctl">${ctl}</div>` : ''}</div>`;
 const stHowto = (title, body) => `<details class="st-howto"><summary>${ic('help')} ${title}</summary><div class="st-howto-body">${body}</div></details>`;
 
@@ -491,7 +503,7 @@ async function renderSettings(c) {
   const testable = worker ? !!setup.assistantOnServer : true;
 
   c.innerHTML = `<div class="st">
-    <div class="st-top"><h2>Settings</h2><p class="muted">Saved in this browser only.</p></div>
+    <p class="st-lead">${ic('monitor')} Saved in this browser only.</p>
 
     ${sec('Appearance', stRow('Theme', 'System follows this device.',
       `<div class="segmented" role="group" aria-label="Theme">${[['system', 'monitor', 'System'], ['light', 'sun', 'Light'], ['dark', 'moon', 'Dark']].map(([v, i, l]) => `<button type="button" data-theme-set="${v}" aria-pressed="${v === themePref}">${ic(i)} ${l}</button>`).join('')}</div>`))}
@@ -511,7 +523,7 @@ async function renderSettings(c) {
     ${staff ? `
     ${sec('Assistant', `
       <div class="st-row">
-        <div class="st-lbl"><b>${worker ? 'Assistant key' : 'Anthropic key'} <span id="st-aikey-pill">${worker ? stPill(setup.assistantOnServer, 'Shared', 'Not set up') : stPill(!!AI.key)}</span></b>
+        <div class="st-lbl"><b>${worker ? 'Assistant key' : 'Anthropic key'} <span id="st-aikey-pill">${worker ? (setup.assistantOnServer ? stPill(true, 'Shared') : stUnset('Not set up')) : (AI.key ? stPill(true) : stUnset('Not set', 'Add key'))}</span></b>
           <span>${worker ? 'Shared by every DM. It is kept on the sign-in service, not in this browser.' : 'Your own key. It stays in this browser and is only sent to Anthropic.'}</span>
           <span class="st-test" id="st-aitest-out" role="status" aria-live="polite"></span></div>
         <div class="st-ctl"><div class="st-keyrow">
@@ -552,15 +564,15 @@ async function renderSettings(c) {
     ` : ''}
 
     ${sec(staff ? 'Shortcuts' : 'Tips', (staff ? `
-      ${key(['N'], 'Next turn, while the Battle panel is showing')}
+      ${key(['N'], 'Next turn, while Initiative is showing')}
       ${key(['/'], 'Jump to the chat box')}
       ${key(['['], 'Collapse or expand the sidebar')}
       ${key(['Esc'], 'Close a menu or the map panel, or leave a field')}
       ${key(['Enter'], 'DM Chat: send to whoever is selected in To')}
-      ${key([mod, 'Enter'], 'DM Chat: ask the assistant')}
+      ${key([mod, 'Enter'], 'DM Chat: ask the assistant, whatever To says')}
       ${key(['Shift', 'Enter'], 'DM Chat: new line')}
-      ${tip('Battle', 'Click an HP chip to type a value (12, 12/30, −7). Add monsters from Prep &amp; tools.')}
-      ${tip('Map', 'Tap a room for notes. <b>Party moves here</b> is what your co-DM sees.')}`
+      ${tip('Initiative', 'Click an HP chip to type a value (12, 12/30, −7). Add monsters from Prep &amp; tools.')}
+      ${tip('World map', 'Tap a room for notes. <b>Party moves here</b> is what your co-DM sees.')}`
       : `${tip('Party', 'Tap your character to update HP, gold and conditions.')}
       ${tip('Dice', 'Roll from the Dice tab. Everyone at the table sees the result.')}
       ${tip('Battle map', 'Shows the fight as the DMs reveal it.')}`) +
@@ -584,6 +596,7 @@ async function renderSettings(c) {
   customSelect($('#st-model'), 'Model'); customSelect($('#st-effort'), 'Effort'); customSelect($('#st-invite-user'), 'Sign them in as');
   // assistant: saves as you go
   const aikey = $('#st-aikey'), aitest = $('#st-aitest'), aiOut = $('#st-aitest-out');
+  on('st-aikey-add', () => { const how = c.querySelector('#st-ai .st-howto'); if (how) how.open = true; if (aikey) aikey.focus(); });
   const saveKey = () => {
     const k = aikey && aikey.value.trim(); if (!k) return false;
     localStorage.setItem('gc_ai_key', k); aikey.value = ''; aikey.placeholder = 'Paste to replace';
