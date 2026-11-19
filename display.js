@@ -6,7 +6,8 @@
 'use strict';
 
 const S = { me: null, cache: {}, tab: 'display' }; // gh.js only forwards live changes once a user is logged in
-const DP = { view: null, battle: null, enc: null, sceneId: null, camRect: null, lastBc: 0, bcVisible: false, lastT: 0, snap: true, titleT: 0, chipT: 0, idleT: 0 };
+const DP = { view: null, battle: null, enc: null, sceneId: null, camRect: null, lastBc: 0, bcVisible: false, lastT: 0, snap: true, titleT: 0, chipT: 0, idleT: 0, fsT: 0, edge: null };
+const DP_EMBED = /[?&]embed=1/.test(location.search); // inside a player's Battle map tab: no full-screen hints
 const dp$ = id => document.getElementById(id);
 const dpEsc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const dpBcAlive = () => Date.now() - DP.lastBc < 6500 && DP.bcVisible;
@@ -44,7 +45,7 @@ function dpTitle(name) {
   const t = dp$('dp-title');
   t.innerHTML = `<i></i><b>${dpEsc(name || '')}</b><i></i>`;
   t.classList.remove('show'); void t.offsetWidth; t.classList.add('show');
-  clearTimeout(DP.titleT); DP.titleT = setTimeout(() => t.classList.remove('show'), 4200);
+  clearTimeout(DP.titleT); DP.titleT = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
 // ---------- camera: follow the DM, fit what is revealed, or a locked view ----------
@@ -64,10 +65,23 @@ function dpTargetRect() {
   }
   return { x: 0, y: 0, w, h };
 }
-function dpPad() { return { t: dp$('dp-init').classList.contains('hidden') ? 28 : 150, r: 28, b: 28, l: 28 }; }
+// keep the map out from under the ribbon: at least 96 px, or wherever the ribbon really ends
+function dpPad() {
+  const el = dp$('dp-init'), top = el.classList.contains('hidden') ? 28 : Math.max(96, el.offsetTop + el.offsetHeight + 10); // layout box: ignores the drop-in animation
+  return { t: top, r: 28, b: 28, l: 28 };
+}
+/* No dead strips past the map: where the map is bigger than the screen it fills it edge to edge (below
+   the ribbon's band at the top); where it is smaller it stays whole. The fit rect alone, centred, used
+   to leave the space beyond the map's edge on screen, and with it the map's edge line. */
+function dpClamp(c, pad) {
+  const v = DP.view, { w, h } = bsSceneSize(v.scene);
+  const axis = (pos, len, lo, hi) => (len >= hi - lo ? bsClamp(pos, hi - len, lo) : bsClamp(pos, lo, hi - len));
+  return { z: c.z, x: axis(c.x, w * c.z, 0, v.W), y: axis(c.y, h * c.z, pad.t > 40 ? pad.t : 0, v.H) };
+}
 function dpFrame(t) {
   const v = DP.view, r = dpTargetRect(); if (!r) { DP.lastT = t; return false; }
-  const to = v.camFor(r, dpPad());
+  const pad = dpPad(), to = dpClamp(v.camFor(r, pad), pad);
+  v.safe = { t: pad.t > 40 ? pad.t - 6 : 0, r: 0, b: 0, l: 0 }; // token labels stay out from under the ribbon
   const dt = Math.min(80, t - (DP.lastT || t)); DP.lastT = t;
   if (DP.snap) { v.cam = to; DP.snap = false; return false; }
   const W2 = v.W / 2, H2 = v.H / 2, cz = v.cam.z;
@@ -101,9 +115,46 @@ function dpRenderInit() {
     ${next.length ? `<div class="dp-next"><span>Up next</span><div class="dp-next-row">${next.map((c, i) => `<div class="dp-up" style="--i:${i}"><canvas data-n="${i}"></canvas><b>${dpEsc(bsBaseName(info(c).name))}${bsNumber(info(c).name) ? ` <i>${bsNumber(info(c).name)}</i>` : ''}</b></div>`).join('')}</div></div>` : ''}`;
   const wasHidden = el.classList.contains('hidden');
   el.classList.remove('hidden');
-  if (now) bsDisc(dp$('dp-now-disc'), nowInfo, 72, { ring: nowInfo.down ? '#6b7280' : '#f2c15e' });
-  el.querySelectorAll('canvas[data-n]').forEach(cv => bsDisc(cv, info(next[Number(cv.dataset.n)]), 40));
+  if (now) dpFaceDisc(dp$('dp-now-disc'), nowInfo, 60, '#f2b544');
+  el.querySelectorAll('canvas[data-n]').forEach(cv => dpFaceDisc(cv, info(next[Number(cv.dataset.n)]), 38));
   if (wasHidden) DP.view.request();
+}
+
+/* A head-and-shoulders crop for tall portraits, so faces read from across the room (the token disc
+   centres the crop, which on a full-length portrait is mostly torso). Square art goes through bsDisc. */
+function dpFaceDisc(cv, info, css, ring) {
+  ring = info.down ? '#6b7280' : ring || BS_KINDS[info.kind].ring;
+  const e = info.img ? bsImage(info.img, () => { if (cv.isConnected) dpFaceDisc(cv, info, css, ring); }) : null;
+  const im = e && e.img;
+  if (!im && info.img && !info.down) return bsDisc(cv, { ...info, img: null }, css, { ring }); // initials until the image arrives
+  if (!im || info.down || im.height / im.width < 1.15) return bsDisc(cv, info, css, { ring });
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5), px = Math.round(css * dpr), x = cv.getContext('2d');
+  cv.width = px; cv.height = px; cv.style.width = css + 'px'; cv.style.height = css + 'px';
+  const side = im.width * 0.62, sx = (im.width - side) / 2, sy = im.height * 0.05, lw = Math.max(2, px * 0.075), R = px / 2;
+  x.clearRect(0, 0, px, px);
+  x.save(); x.beginPath(); x.arc(R, R, R - lw * 0.6, 0, BS_TAU); x.clip();
+  x.imageSmoothingQuality = 'high'; x.drawImage(im, sx, sy, side, side, 0, 0, px, px); x.restore();
+  x.beginPath(); x.arc(R, R, R - lw / 2, 0, BS_TAU); x.lineWidth = lw; x.strokeStyle = ring; x.stroke();
+  x.beginPath(); x.arc(R, R, R - lw - 0.5, 0, BS_TAU); x.lineWidth = 1; x.strokeStyle = 'rgba(0,0,0,.4)'; x.stroke();
+  return cv;
+}
+
+/* Under fog the map's outer grid line sits half outside the fog, so wherever a map edge is on screen it
+   showed as a thin rule. Paint it over in the backdrop colour (sampled once per scene from a corner that
+   is off the map, so it always matches whatever the renderer fills there). */
+function dpHideEdges() {
+  const v = DP.view, sc = v.scene; if (!sc || !sc.fog || !sc.fog.on) return;
+  const { w, h } = bsSceneSize(sc), [x0, y0] = v.toScreen(0, 0), [x1, y1] = v.toScreen(w, h);
+  if (x0 <= 0 && y0 <= 0 && x1 >= v.W && y1 >= v.H) return; // the map fills the screen
+  const ctx = v.ctx, d = v.dpr;
+  if (!DP.edge || DP.edge.id !== sc.id) {
+    const off = [[1, 1], [v.W - 2, 1], [1, v.H - 2], [v.W - 2, v.H - 2]].find(([X, Y]) => X < x0 - 36 || X > x1 + 36 || Y < y0 - 36 || Y > y1 + 36);
+    if (!off) return;
+    const p = ctx.getImageData(Math.floor(off[0] * d), Math.floor(off[1] * d), 1, 1).data;
+    DP.edge = { id: sc.id, col: `rgb(${p[0]},${p[1]},${p[2]})` };
+  }
+  ctx.save(); ctx.setTransform(d, 0, 0, d, 0, 0); ctx.strokeStyle = DP.edge.col; ctx.lineWidth = 4;
+  ctx.strokeRect(x0, y0, x1 - x0, y1 - y0); ctx.restore();
 }
 
 // ---------- messages from the DM tab ----------
@@ -128,13 +179,27 @@ function dpOnMessage(m) {
 
 // ---------- full screen, idle cursor ----------
 function dpToggleFs() {
+  if (DP_EMBED) return;
+  dpFsHint(false);
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => dpChip('Full screen was blocked: click the page, then press F'));
 }
 function dpChip(text, ms = 3500) { const c = dp$('dp-chip'); c.textContent = text; c.classList.add('show'); clearTimeout(DP.chipT); DP.chipT = setTimeout(() => c.classList.remove('show'), ms); }
-document.addEventListener('keydown', e => { if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); dp$('dp-fs').classList.add('hidden'); dpToggleFs(); } });
-document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && !/[?&]embed=1/.test(location.search)) dpChip('Press F for full screen'); });
-function dpWake() { document.body.classList.remove('idle'); clearTimeout(DP.idleT); DP.idleT = setTimeout(() => document.body.classList.add('idle'), 2000); }
+// "Press F for full screen": shown while windowed, fading out after 4 s (and again when the mouse moves)
+function dpFsHint(show = true) {
+  const el = dp$('dp-fs'); clearTimeout(DP.fsT);
+  if (!show || DP_EMBED || document.fullscreenElement) { el.classList.remove('show'); return; }
+  el.classList.remove('hidden'); void el.offsetWidth; el.classList.add('show');
+  DP.fsT = setTimeout(() => el.classList.remove('show'), 4000);
+}
+document.addEventListener('keydown', e => { if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey && !DP_EMBED) { e.preventDefault(); dpToggleFs(); } });
+// a click anywhere on the TV window goes full screen, as the old centred prompt did
+document.addEventListener('click', e => { if (!DP_EMBED && e.button === 0 && !document.fullscreenElement) dpToggleFs(); });
+document.addEventListener('fullscreenchange', () => { dpFsHint(!document.fullscreenElement); });
+function dpWake(e) {
+  document.body.classList.remove('idle'); clearTimeout(DP.idleT); DP.idleT = setTimeout(() => document.body.classList.add('idle'), 2000);
+  if (e && e.type === 'mousemove' && !dp$('dp-fs').classList.contains('show')) dpFsHint();
+}
 ['mousemove', 'pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, dpWake, { passive: true }));
 
 (async function dpBoot() {
@@ -147,6 +212,8 @@ function dpWake() { document.body.classList.remove('idle'); clearTimeout(DP.idle
   connectSSE();
   const v = DP.view = new BattleView(dp$('dp-canvas'), { player: true });
   v.onFrame = dpFrame;
+  const draw = v.draw;
+  v.draw = function (...a) { const r = draw.apply(this, a); try { dpHideEdges(); } catch (_) { /* never break a frame */ } return r; };
   v.setChars(RAW.characters || []);
   dpApplyEnc(RAW.encounter);
   dpApplyBattle(RAW.battle);
@@ -162,9 +229,6 @@ function dpWake() { document.body.classList.remove('idle'); clearTimeout(DP.idle
   }
   // the camera re-targets when the window changes size (moved to the TV, full screen)
   window.addEventListener('resize', () => { DP.view.request(); });
-  if (!document.fullscreenElement && !/[?&]embed=1/.test(location.search)) { // embedded in a player's Battle map tab: no full-screen prompt
-    const fs = dp$('dp-fs'); fs.classList.remove('hidden');
-    fs.onclick = () => { fs.classList.add('hidden'); dpToggleFs(); };
-  }
+  if (!DP_EMBED) dpFsHint(); // embedded in a player's Battle map tab: no full-screen prompt
   if (document.fonts) document.fonts.ready.then(() => { BS_SPRITES.clear(); v.request(); dp$('dp-init').dataset.sig = ''; dpRenderInit(); });
 })();

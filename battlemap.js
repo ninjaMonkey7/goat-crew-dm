@@ -8,11 +8,14 @@
 Object.assign(ICONS, {
   pointer: '<path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" />',
   hand: '<path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" /><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" /><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />',
-  ruler: '<path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z" /><path d="m14.5 12.5 2-2" /><path d="m11.5 9.5 2-2" /><path d="m8.5 6.5 2-2" /><path d="m17.5 15.5 2-2" />',
+  measure: '<path d="M2 8.5A1.5 1.5 0 0 1 3.5 7h17A1.5 1.5 0 0 1 22 8.5v7a1.5 1.5 0 0 1-1.5 1.5h-17A1.5 1.5 0 0 1 2 15.5z" /><path d="M6 7v4" /><path d="M10 7v2.5" /><path d="M14 7v4" /><path d="M18 7v2.5" />',
   brush: '<path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08" /><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z" />',
   aoe: '<path d="M3 12 20 4.5v15z" /><circle cx="3" cy="12" r="1" />',
   fog: '<path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" /><path d="M16 17H7" /><path d="M17 21H9" />',
-  radio: '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" /><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" /><circle cx="12" cy="12" r="2" /><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" /><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19.1" />',
+  ping: '<path d="M18 8c0 3.613-3.869 7.429-5.393 8.795a1 1 0 0 1-1.214 0C9.87 15.429 6 11.613 6 8a6 6 0 0 1 12 0" /><circle cx="12" cy="8" r="2" /><path d="M8.714 14h-3.71a1 1 0 0 0-.948.683l-2.004 6A1 1 0 0 0 3 22h18a1 1 0 0 0 .948-1.316l-2-6a1 1 0 0 0-.949-.684h-3.712" />',
+  tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" /><circle cx="7.5" cy="7.5" r="1.5" />',
+  apps: '<rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" />',
+  minimize: '<path d="M8 3v3a2 2 0 0 1-2 2H3" /><path d="M21 8h-3a2 2 0 0 1-2-2V3" /><path d="M3 16h3a2 2 0 0 1 2 2v3" /><path d="M16 21v-3a2 2 0 0 1 2-2h3" />',
   eraser: '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" /><path d="M22 21H7" /><path d="m5 11 9 9" />',
   undo: '<path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />',
   redo: '<path d="m15 14 5-5-5-5" /><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13" />',
@@ -43,20 +46,24 @@ Object.assign(ICONS, {
   heart: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />'
 });
 
+// g = the rail group: select/pan | measure/draw/template | fog | ping/eraser (then undo/redo, add token, grid)
 const BM_TOOLS = [
-  { id: 'select', key: 'v', icon: 'pointer', name: 'Select & move', tip: 'Drag tokens · Shift-drag to box-select · Alt places freely' },
-  { id: 'pan', key: 'h', icon: 'hand', name: 'Pan', tip: 'Or hold Space, or drag with the middle button' },
-  { id: 'ruler', key: 'r', icon: 'ruler', name: 'Measure', tip: 'Drag to measure in 5-foot squares' },
-  { id: 'draw', key: 'd', icon: 'brush', name: 'Draw' },
-  { id: 'template', key: 't', icon: 'aoe', name: 'Spell templates' },
-  { id: 'fog', key: 'f', icon: 'fog', name: 'Fog of war' },
-  { id: 'ping', key: 'p', icon: 'radio', name: 'Ping', tip: 'Or Alt-click with any tool' },
-  { id: 'eraser', key: 'e', icon: 'eraser', name: 'Eraser', tip: 'Click or drag across drawings and templates' }
+  { id: 'select', key: 'v', icon: 'pointer', name: 'Select & move', g: 0, tip: 'Drag tokens · Shift-drag to box-select · Alt places freely' },
+  { id: 'pan', key: 'h', icon: 'hand', name: 'Pan', g: 0, tip: 'Or hold Space, or drag with the middle button' },
+  { id: 'ruler', key: 'r', icon: 'measure', name: 'Measure', g: 1, tip: 'Drag to measure in 5-foot squares' },
+  { id: 'draw', key: 'd', icon: 'brush', name: 'Draw', g: 1 },
+  { id: 'template', key: 't', icon: 'aoe', name: 'Spell templates', g: 1 },
+  { id: 'fog', key: 'f', icon: 'fog', name: 'Fog of war', g: 2 },
+  { id: 'ping', key: 'p', icon: 'ping', name: 'Ping', g: 3, tip: 'Or Alt-click with any tool' },
+  { id: 'eraser', key: 'e', icon: 'eraser', name: 'Eraser', g: 3, tip: 'Click or drag across drawings and templates' }
 ];
+const BM_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+const BM_MOD = BM_MAC ? '⌘' : 'Ctrl ';
 const BM_COLORS = ['#f8fafc', '#f2c15e', '#ef4444', '#22c55e', '#38bdf8', '#a78bfa', '#111827'];
 const BM_TPL_COLORS = [['#f97316', 'Fire'], ['#38bdf8', 'Frost'], ['#84cc16', 'Acid'], ['#a78bfa', 'Arcane'], ['#facc15', 'Radiant'], ['#94a3b8', 'Force']];
 const BM_WIDTHS = { thin: 0.035, med: 0.07, thick: 0.14 }; // fraction of a grid square
-const BM_PAD = { t: 72, r: 76, b: 104, l: 24 };
+// the map runs under every panel; these keep what matters out from under them (strip, rail, bottom bar)
+const BM_PAD = { t: 80, r: 76, b: 84, l: 24 };
 
 const BM_PREFS = (() => { try { return JSON.parse(localStorage.getItem('gc_bm_prefs') || '{}') || {}; } catch (_) { return {}; } })();
 const bmPref = (k, d) => (BM_PREFS[k] === undefined ? d : BM_PREFS[k]);
@@ -66,7 +73,8 @@ const BM = {
   root: null, stage: null, view: null, doc: null, enc: null, sceneId: null,
   pending: [], saving: false, flushT: 0, firstPending: 0, undo: [], redo: [], hpPend: {}, hpT: 0,
   tool: bmPref('tool', 'select'), prevTool: 'select', act: null, down: null, pointers: new Map(), pinch: null,
-  space: false, zoomAnim: null, camAnim: null, fogPoly: null, pop: null, displaySeen: 0, gridBefore: null, gridT: 0
+  space: false, zoomAnim: null, camAnim: null, fogPoly: null, pop: null, displaySeen: 0, gridBefore: null, gridT: 0,
+  cams: {} // this page session's camera per scene: coming back to the tab keeps the view; a fresh load fits the action
 };
 const bmMounted = () => !!(BM.root && BM.root.isConnected);
 const bmClone = o => (o == null ? o : structuredClone(o));
@@ -218,7 +226,7 @@ function bmEncChanged() {
   bmPostEnc();
   if (!bmMounted()) return;
   BM.view.setEncounter(BM.enc);
-  bmRenderInit(); bmRenderTray(); bmRenderInspector();
+  bmRenderInit(); bmRenderTray(); bmRenderInspector(); bmSyncSafe();
 }
 
 // ---------- the player display: BroadcastChannel + window placement ----------
@@ -281,23 +289,27 @@ window.addEventListener('gc-saved', e => {
 // ---------- render the tab ----------
 async function renderBattleMap(c) {
   // Players get the same player-safe view as the TV (the login server only sends them that much anyway)
-  if (!isStaff(S.me)) { if (BM.view) { BM.view.destroy(); BM.view = null; } c.innerHTML = '<iframe class="bm-player-frame" src="display.html?embed=1" title="Battle map"></iframe>'; return; }
+  if (!isStaff(S.me)) { document.body.classList.remove('bm-full'); if (BM.view) { BM.view.destroy(); BM.view = null; } c.innerHTML = '<iframe class="bm-player-frame" src="display.html?embed=1" title="Battle map"></iframe>'; return; }
   await api('/api/battle'); // logged in + data loaded
   if (BM.view) { BM.view.destroy(); BM.view = null; }
   bmRebase();
   BM.enc = bmEncView();
+  // full-bleed: battlemap.css folds the app header and tab bar away while this tab is open (body.tab-battlemap.bm-full)
+  document.body.classList.add('bm-full');
   c.innerHTML = bmShellHTML();
   BM.root = c.querySelector('.bm'); BM.stage = c.querySelector('#bm-stage');
   bmFitHeight();
   const v = BM.view = new BattleView(c.querySelector('#bm-canvas'));
   v.setChars(RAW.characters || []); v.setEncounter(BM.enc); v.rule = bmPref('rule', '5');
   v.onCamera = () => { bmRenderZoom(); bmPostCam(); bmSaveCamSoon(); bmRenderInspectorPos(); };
+  v.labels = bmPref('labels', 'focus'); // names on hover, selection, drag and the active turn; L shows them all
+  v.backdrop = bmBackdrop();
   v.onFrame = bmFrame;
   bmBind();
   let id = localStorage.getItem('gc_bm_scene');
   if (!bmScene(id)) id = (BM.doc.display.sceneId && bmScene(BM.doc.display.sceneId)) ? BM.doc.display.sceneId : (BM.doc.scenes[0] && BM.doc.scenes[0].id);
   bmRenderTools();
-  bmSelectScene(id || null);
+  bmSelectScene(id || null, true);
   bmSaveState(BM.pending.length ? 'pending' : 'saved');
   bmPostDoc(); bmPostEnc();
 }
@@ -306,23 +318,53 @@ function bmFitHeight() {
   const top = BM.root.parentElement.getBoundingClientRect().top + window.scrollY;
   BM.root.style.height = Math.max(360, window.innerHeight - top) + 'px';
 }
-window.addEventListener('resize', () => { if (bmMounted()) bmFitHeight(); });
+window.addEventListener('resize', () => { if (bmMounted()) { bmFitHeight(); bmSyncSafe(); } });
+// beyond the map's edge: the theme's backdrop (battlemap.css --bm-backdrop), so light mode reads as a board on a light table
+function bmBackdrop() { return (BM.root && getComputedStyle(BM.root).getPropertyValue('--bm-backdrop').trim()) || '#0c0e13'; }
+new MutationObserver(() => { if (bmMounted() && BM.view) { BM.view.backdrop = bmBackdrop(); BM.view.request(); } })
+  .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+// the screen bands the floating panels cover, so the renderer keeps token labels out from under them
+function bmSyncSafe() {
+  const v = BM.view; if (!v || !bmMounted()) return;
+  const R = BM.root.getBoundingClientRect();
+  const box = sel => { const el = BM.root.querySelector(sel); return el && el.offsetParent && !el.classList.contains('hidden') ? el.getBoundingClientRect() : null; };
+  const top = [box('#bm-init'), box('.bm-app')].filter(Boolean), rail = box('#bm-tools'), low = [box('.bm-bl'), box('#bm-tray'), box('.bm-zoom')].filter(Boolean);
+  v.safe = {
+    t: top.length ? Math.round(Math.max(...top.map(b => b.bottom)) - R.top + 6) : 0,
+    r: rail ? Math.round(R.right - rail.left + 6) : 0,
+    b: low.length ? Math.round(R.bottom - Math.min(...low.map(b => b.top)) + 6) : 0,
+    l: 0
+  };
+  v.request();
+}
+function bmToggleLabels() {
+  const v = BM.view; if (!v) return;
+  v.labels = v.labels === 'all' ? 'focus' : 'all'; bmSetPref('labels', v.labels);
+  bmRenderToolsState(); v.request();
+  bmFlash(v.labels === 'all' ? 'Showing every name' : 'Names on hover, selection and the active turn');
+}
 
 function bmShellHTML() {
   return `<div class="bm" tabindex="-1">
     <div class="bm-stage" id="bm-stage"><canvas id="bm-canvas"></canvas></div>
-    <div class="bm-init bm-glass hidden" id="bm-init" aria-label="Initiative"></div>
-    <div class="bm-topright">
-      <span class="bm-save" id="bm-save" data-state="saved" aria-live="polite"></span>
-      <button class="bm-cast bm-glass" id="bm-cast" title="Player display (TV)">${ic('cast')}<span>Display</span><i class="bm-dot" id="bm-cast-dot"></i>${ic('chevdown', 'bm-chev')}</button>
+    <div class="bm-app">
+      <button class="bm-app-btn bm-glass" id="bm-app" aria-haspopup="true" aria-expanded="false" aria-label="All tabs" data-tip="All tabs · theme · pin a panel">${ic('apps')}<span>Battle map</span>${ic('chevdown', 'bm-chev')}</button>
+      <button class="bm-fs-btn bm-glass" id="bm-fs" aria-label="Full screen" data-tip="Full screen" data-key="\\">${ic('maximize')}</button>
     </div>
+    <div class="bm-init bm-glass hidden" id="bm-init" aria-label="Initiative"></div>
     <div class="bm-tools bm-glass" id="bm-tools" role="toolbar" aria-label="Battle map tools" aria-orientation="vertical"></div>
     <div class="bm-flyout bm-glass hidden" id="bm-flyout"></div>
     <div class="bm-insp bm-glass hidden" id="bm-insp"></div>
     <div class="bm-bottom">
-      <button class="bm-scene bm-glass" id="bm-scene-btn" title="Scenes">${ic('layers')}<span id="bm-scene-name">No scene</span>${ic('chevup', 'bm-chev')}</button>
+      <div class="bm-bl">
+        <button class="bm-scene bm-glass" id="bm-scene-btn" data-tip="Scenes">${ic('layers')}<span id="bm-scene-name">No scene</span>${ic('chevup', 'bm-chev')}</button>
+        <button class="bm-cast bm-glass" id="bm-cast" aria-label="Player display (TV)" data-tip="Player display (TV)">${ic('cast')}<span>Display</span><i class="bm-dot" id="bm-cast-dot"></i>${ic('chevup', 'bm-chev')}</button>
+      </div>
       <div class="bm-tray bm-glass hidden" id="bm-tray"></div>
-      <div class="bm-zoom bm-glass" id="bm-zoom"></div>
+      <div class="bm-br">
+        <span class="bm-save" id="bm-save" data-state="saved" aria-live="polite"></span>
+        <div class="bm-zoom bm-glass" id="bm-zoom"></div>
+      </div>
     </div>
     <div class="bm-pop bm-glass hidden" id="bm-pop"></div>
     <div class="bm-hint hidden" id="bm-hint"></div>
@@ -334,7 +376,8 @@ function bmShellHTML() {
   </div>`;
 }
 
-function bmSelectScene(id) {
+// restore: coming back to the tab in the same page session keeps that scene's view; otherwise fit the action
+function bmSelectScene(id, restore) {
   BM.sceneId = id && bmScene(id) ? id : null;
   if (BM.sceneId) localStorage.setItem('gc_bm_scene', BM.sceneId);
   const v = BM.view, sc = bmScene();
@@ -343,8 +386,7 @@ function bmSelectScene(id) {
   BM.root.classList.toggle('bm-noscene', !sc);
   $('#bm-empty').classList.toggle('hidden', !!sc);
   if (!sc) { bmRenderEmpty(); bmRenderAll(); return; }
-  let cam = null;
-  try { cam = JSON.parse(localStorage.getItem('gc_bm_cam:' + sc.id) || 'null'); } catch (_) { /* ignore */ }
+  const cam = restore && BM.cams[sc.id];
   if (cam && cam.z) v.setCam({ z: cam.z, x: v.W / 2 - cam.cx * cam.z, y: v.H / 2 - cam.cy * cam.z });
   else bmFit(false);
   bmRenderAll();
@@ -364,7 +406,7 @@ function bmChanged(remote) {
   bmRenderAll(true);
 }
 function bmRenderAll(soft) {
-  bmRenderSceneChip(); bmRenderTray(); bmRenderInit(); bmRenderZoom(); bmRenderInspector(soft); bmRenderToolsState(); bmRenderCastDot();
+  bmRenderSceneChip(); bmRenderTray(); bmRenderInit(); bmRenderZoom(); bmRenderInspector(soft); bmRenderToolsState(); bmRenderCastDot(); bmSyncSafe();
   if (!soft && BM.pop) bmClosePop();
 }
 
@@ -385,10 +427,32 @@ function bmZoomBy(f) {
   v.request();
 }
 function bmAnimateCam(to) { BM.zoomAnim = null; BM.camAnim = { from: { ...BM.view.cam }, to, t0: performance.now(), dur: 420 }; BM.view.request(); }
-function bmFit(animate) {
+// what to frame: the tokens plus two squares, else the revealed area, else the whole map
+function bmContentRect(sc) {
+  const s = bsGrid(sc).size, { w, h } = bsSceneSize(sc);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const add = (x, y, r) => { x0 = Math.min(x0, x - r); y0 = Math.min(y0, y - r); x1 = Math.max(x1, x + r); y1 = Math.max(y1, y + r); };
+  for (const t of sc.tokens) if (Number.isFinite(t.x) && Number.isFinite(t.y)) add(t.x, t.y, Math.max(0.5, Number(t.size) || 1) * s / 2 + 2 * s);
+  if (!(x1 > x0) && sc.fog.on) for (const r of sc.fog.reveals) if (!r.hide) for (const [x, y] of r.pts || []) add(x, y, s);
+  if (!(x1 > x0 && y1 > y0)) return { x: 0, y: 0, w, h };
+  // never tighter than about 16 × 10 squares, and only the map itself
+  const grow = (a, b, min) => (b - a >= min ? [a, b] : [(a + b - min) / 2, (a + b + min) / 2]);
+  [x0, x1] = grow(x0, x1, Math.min(w, 16 * s)); [y0, y1] = grow(y0, y1, Math.min(h, 10 * s));
+  x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(w, x1); y1 = Math.min(h, y1);
+  return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : { x: 0, y: 0, w, h };
+}
+// no dead bands: where the map is bigger than the window it fills it edge to edge
+function bmClampCam(c) {
+  const sc = bmScene(), v = BM.view; if (!sc) return c;
+  const { w, h } = bsSceneSize(sc);
+  const axis = (pos, len, span) => (len >= span ? bsClamp(pos, span - len, 0) : bsClamp(pos, 0, span - len));
+  return { z: c.z, x: axis(c.x, w * c.z, v.W), y: axis(c.y, h * c.z, v.H) };
+}
+function bmFit(animate, whole) {
   const sc = bmScene(); if (!sc) return;
-  const { w, h } = bsSceneSize(sc), to = BM.view.camFor({ x: 0, y: 0, w, h }, BM_PAD);
-  if (animate) bmAnimateCam(to); else BM.view.setCam(to);
+  const { w, h } = bsSceneSize(sc), v = BM.view;
+  const to = whole ? v.camFor({ x: 0, y: 0, w, h }, BM_PAD) : bmClampCam(v.camFor(bmContentRect(sc), BM_PAD));
+  if (animate) bmAnimateCam(to); else v.setCam(to);
 }
 function bmCenterOn(x, y) { const v = BM.view, z = v.cam.z; bmAnimateCam({ z, x: (BM_PAD.l + v.W - BM_PAD.r) / 2 - x * z, y: (BM_PAD.t + v.H - BM_PAD.b) / 2 - y * z }); }
 // per-frame camera easing (smooth wheel zoom, fit, centre)
@@ -418,30 +482,39 @@ function bmSaveCamSoon() {
   bmCamSaveT = setTimeout(() => {
     const v = BM.view; if (!v || !BM.sceneId) return;
     const [cx, cy] = v.toScene(v.W / 2, v.H / 2);
-    try { localStorage.setItem('gc_bm_cam:' + BM.sceneId, JSON.stringify({ cx, cy, z: v.cam.z })); } catch (_) { /* ignore */ }
+    BM.cams[BM.sceneId] = { cx, cy, z: v.cam.z };
   }, 400);
 }
 
 // ---------- floating UI ----------
 function bmRenderTools() {
-  const el = $('#bm-tools');
-  el.innerHTML = BM_TOOLS.map(t => `<button class="bm-tool" data-tool="${t.id}" aria-label="${t.name}" data-tip="${t.name}" data-key="${t.key.toUpperCase()}">${ic(t.icon)}</button>`).join('')
-    + `<span class="bm-sep"></span>
-      <button class="bm-tool" id="bm-undo" aria-label="Undo" data-tip="Undo" data-key="⌘Z">${ic('undo')}</button>
-      <button class="bm-tool" id="bm-redo" aria-label="Redo" data-tip="Redo" data-key="⇧⌘Z">${ic('redo')}</button>
-      <span class="bm-sep"></span>
+  const el = $('#bm-tools'), sep = '<span class="bm-sep" role="separator"></span>';
+  el.innerHTML = BM_TOOLS.map((t, i) => `${i && t.g !== BM_TOOLS[i - 1].g ? sep : ''}<button class="bm-tool" data-tool="${t.id}" aria-label="${t.name} (${t.key.toUpperCase()})" data-tip="${t.name}" data-key="${t.key.toUpperCase()}">${ic(t.icon)}</button>`).join('')
+    + `${sep}
+      <button class="bm-tool" id="bm-undo" aria-label="Undo" data-tip="Undo" data-key="${BM_MOD}Z">${ic('undo')}</button>
+      <button class="bm-tool" id="bm-redo" aria-label="Redo" data-tip="Redo" data-key="${BM_MAC ? '⇧⌘Z' : 'Ctrl Y'}">${ic('redo')}</button>
+      ${sep}
+      <button class="bm-tool" id="bm-add-tok" aria-label="Add a token" data-tip="Add a token" data-key="A">${ic('userplus')}</button>
+      <button class="bm-tool" id="bm-labels" aria-label="Show every name" data-key="L">${ic('tag')}</button>
       <button class="bm-tool" id="bm-grid-btn" aria-label="Grid settings" data-tip="Grid & scale" data-key="G">${ic('grid')}</button>`;
   el.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => bmSetTool(b.dataset.tool));
   $('#bm-undo').onclick = () => bmUndoRedo(false);
   $('#bm-redo').onclick = () => bmUndoRedo(true);
+  $('#bm-add-tok').onclick = () => (BM.pop === 'token' ? bmClosePop() : bmOpenNewToken());
   $('#bm-grid-btn').onclick = () => (BM.pop === 'grid' ? bmClosePop() : bmOpenGrid());
+  $('#bm-labels').onclick = () => bmToggleLabels();
 }
 function bmRenderToolsState() {
   if (!bmMounted()) return;
   $$('#bm-tools [data-tool]').forEach(b => { const on = b.dataset.tool === BM.tool; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
   const u = $('#bm-undo'), r = $('#bm-redo');
-  if (u) u.disabled = !BM.undo.length; if (r) r.disabled = !BM.redo.length;
-  $('#bm-grid-btn').classList.toggle('on', BM.pop === 'grid');
+  if (u) { u.disabled = !BM.undo.length; u.dataset.tip = BM.undo.length ? `Undo ${BM.undo[BM.undo.length - 1].label}` : 'Nothing to undo'; }
+  if (r) { r.disabled = !BM.redo.length; r.dataset.tip = BM.redo.length ? `Redo ${BM.redo[BM.redo.length - 1].label}` : 'Nothing to redo'; }
+  $('#bm-grid-btn').classList.toggle('open', BM.pop === 'grid');
+  $('#bm-add-tok').classList.toggle('open', BM.pop === 'token');
+  const lb = $('#bm-labels'), all = !!(BM.view && BM.view.labels === 'all');
+  if (lb) { lb.classList.toggle('open', all); lb.setAttribute('aria-pressed', all); lb.dataset.tip = all ? 'Names: always shown' : 'Names: on hover and turn'; }
+  const app = $('#bm-app'); if (app) { app.classList.toggle('open', BM.pop === 'app'); app.setAttribute('aria-expanded', BM.pop === 'app'); }
   BM.stage.dataset.tool = BM.tool;
 }
 function bmSetTool(id) {
@@ -531,23 +604,24 @@ function bmRenderSceneChip() {
   n.textContent = sc ? sc.name || 'Untitled scene' : 'No scene';
   const onTv = sc && BM.doc.display.sceneId === sc.id;
   $('#bm-scene-btn').classList.toggle('ontv', !!onTv);
-  $('#bm-scene-btn').title = onTv ? 'Scenes · this scene is on the TV' : 'Scenes';
+  $('#bm-scene-btn').dataset.tip = onTv ? 'Scenes · this one is on the TV' : 'Scenes';
 }
 function bmRenderZoom() {
   const el = $('#bm-zoom'), sc = bmScene(); if (!el || !BM.view) return;
   const cell = sc ? bsGrid(sc).size * BM.view.cam.z : 0;
   let cells = 1; while (cell * cells < 14 && cells < 64) cells *= 2;
   const bar = Math.round(bsClamp(cell * cells, 6, 80));
-  const html = `<button class="bm-ib" data-z="out" aria-label="Zoom out" title="Zoom out (−)">${ic('minus')}</button>
-    <button class="bm-zpct" data-z="fit" title="Fit map (0)">${Math.round(BM.view.cam.z * 100)}%</button>
-    <button class="bm-ib" data-z="in" aria-label="Zoom in" title="Zoom in (+)">${ic('plus')}</button>
+  const html = `<button class="bm-ib" data-z="out" aria-label="Zoom out" data-tip="Zoom out" data-key="−">${ic('minus')}</button>
+    <button class="bm-zpct" data-z="fit" aria-label="Fit to the action" data-tip="Fit to the action · Shift-click: whole map" data-key="0">${Math.round(BM.view.cam.z * 100)}%</button>
+    <button class="bm-ib" data-z="in" aria-label="Zoom in" data-tip="Zoom in" data-key="+">${ic('plus')}</button>
     <span class="bm-scale" title="Scale: one square is 5 feet"><i style="width:${bar}px"></i>${cells * 5} ft</span>`;
-  if (el.dataset.k !== html) { el.innerHTML = html; el.dataset.k = html; el.querySelectorAll('[data-z]').forEach(b => b.onclick = () => b.dataset.z === 'fit' ? bmFit(true) : bmZoomBy(b.dataset.z === 'in' ? 1.35 : 1 / 1.35)); }
+  if (el.dataset.k !== html) { el.innerHTML = html; el.dataset.k = html; el.querySelectorAll('[data-z]').forEach(b => b.onclick = e => b.dataset.z === 'fit' ? bmFit(true, e.shiftKey) : bmZoomBy(b.dataset.z === 'in' ? 1.35 : 1 / 1.35)); }
 }
 function bmRenderCastDot() {
   const d = $('#bm-cast-dot'); if (!d) return;
   const live = Date.now() - BM.displaySeen < 7000;
-  d.classList.toggle('live', live); d.title = live ? 'Display connected' : 'Display not open';
+  d.classList.toggle('live', live);
+  const b = $('#bm-cast'); if (b) b.dataset.tip = live ? 'Player display · connected' : 'Player display · not open';
 }
 
 // initiative strip: round · whose turn · who is next · next turn
@@ -556,18 +630,27 @@ function bmRenderInit() {
   const enc = BM.enc || bmEncView(), list = enc.combatants || [];
   if (!list.length || !bmScene()) { el.classList.add('hidden'); el.innerHTML = ''; el.dataset.sig = ''; return; }
   const turn = Math.min(enc.turn || 0, list.length - 1), cur = list[turn];
-  const sig = JSON.stringify([enc.round, turn, list.map(c => [c.id, c.name, c.hp, c.maxHp, c.characterId, c.monster])]);
+  const sig = JSON.stringify([enc.round, turn, list.map(c => [c.id, c.name, c.hp, c.maxHp, c.characterId, c.monster]), bmScene().tokens.filter(t => t.combatantId).map(t => [t.combatantId, t.img, t.kind])]);
   if (el.dataset.sig === sig && !el.classList.contains('hidden')) return;
   el.dataset.sig = sig;
+  // the same language as the TV ribbon: round medallion · now acting · up next, then the amber Next
   const next = []; for (let i = 1; i < list.length && next.length < 4; i++) next.push(list[(turn + i) % list.length]);
-  const hp = c => Number(c.maxHp) > 0 ? `<span class="bm-init-hp ${Number(c.hp) <= Number(c.maxHp) / 2 ? 'low' : ''}">${Number(c.hp) || 0}/${c.maxHp}</span>` : '';
-  el.innerHTML = `<div class="bm-round" title="Round"><small>Round</small><b>${enc.round || 1}</b></div>
-    <button class="bm-ib" id="bm-prev" aria-label="Previous turn" title="Previous turn">${ic('skipback')}</button>
-    <button class="bm-init-cur" data-cid="${esc(cur.id || '')}" title="Centre on ${esc(cur.name)}"><canvas data-disc="${turn}"></canvas><span><small>Turn</small><b>${esc(cur.name || '—')}</b></span>${hp(cur)}</button>
-    <div class="bm-init-next" aria-label="Up next">${next.map(c => `<button class="bm-init-up" data-cid="${esc(c.id || '')}" title="Next: ${esc(c.name)}"><canvas data-disc="${list.indexOf(c)}"></canvas></button>`).join('')}</div>
-    <button class="bm-next" id="bm-next" title="Next turn (N)">Next ${ic('skipfwd')}</button>`;
+  const hpOf = c => Number(c.maxHp) > 0 ? { hp: Number(c.hp) || 0, max: Number(c.maxHp) } : null;
+  const hp = c => { const h = hpOf(c); return h ? `<span class="bm-init-hp ${h.hp <= 0 ? 'down' : h.hp <= h.max / 2 ? 'low' : ''}">${h.hp}<i>/${h.max}</i></span>` : ''; };
+  const curDown = (hpOf(cur) || {}).hp <= 0;
+  const nm = c => `${esc(bsBaseName(c.name) || c.name || '—')}${bsNumber(c.name) ? ` <i>${bsNumber(c.name)}</i>` : ''}`;
+  el.innerHTML = `<div class="bm-round" title="Round ${enc.round || 1}"><small>Round</small><b>${enc.round || 1}</b></div>
+    <button class="bm-ib bm-prev" id="bm-prev" aria-label="Previous turn" data-tip="Previous turn">${ic('skipback')}</button>
+    <button class="bm-init-cur ${curDown ? 'down' : ''}" data-cid="${esc(cur.id || '')}" data-tip="Centre on ${esc(cur.name)}"><canvas data-disc="${turn}"></canvas><span><small>${curDown ? 'Down' : 'Now acting'}</small><b>${esc(cur.name || '—')}</b></span>${hp(cur)}</button>
+    ${next.length ? `<div class="bm-init-next" aria-label="Up next"><small>Up next</small><div class="bm-init-row">${next.map((c, i) => `<button class="bm-init-up ${(hpOf(c) || {}).hp <= 0 ? 'down' : ''}" style="--i:${i}" data-cid="${esc(c.id || '')}" data-tip="Centre on ${esc(c.name)}"><canvas data-disc="${list.indexOf(c)}"></canvas><b>${nm(c)}</b></button>`).join('')}</div></div>` : ''}
+    <button class="bm-next" id="bm-next" aria-label="Next turn" data-tip="Next turn" data-key="N"><span>Next</span>${ic('skipfwd')}</button>`;
   el.classList.remove('hidden');
-  el.querySelectorAll('canvas[data-disc]').forEach(cv => { const c = list[Number(cv.dataset.disc)]; bsDisc(cv, bsCombatantInfo(c, RAW.characters, null), cv.closest('.bm-init-cur') ? 30 : 24); });
+  el.querySelectorAll('canvas[data-disc]').forEach(cv => {
+    const c = list[Number(cv.dataset.disc)], isCur = !!cv.closest('.bm-init-cur'), info = bsCombatantInfo(c, RAW.characters, null);
+    const tok = c.id && bmScene().tokens.find(t => t.combatantId === c.id); // the disc matches the token on the map
+    if (tok) { if (BS_KINDS[tok.kind]) info.kind = tok.kind; if (tok.img) info.img = tok.img; }
+    bmFaceDisc(cv, info, isCur ? 40 : 26, isCur ? '#F2B544' : null);
+  });
   $('#bm-next').onclick = () => bmTurn(1);
   $('#bm-prev').onclick = () => bmTurn(-1);
   el.querySelectorAll('[data-cid]').forEach(b => b.onclick = () => {
@@ -577,27 +660,45 @@ function bmRenderInit() {
   });
 }
 
+/* A head-and-shoulders crop for tall portraits, so a face reads at 26–40 px instead of a dark torso.
+   Square art, emoji and initials go through the usual token disc. */
+function bmFaceDisc(cv, info, css, ring) {
+  ring = info.down ? '#6b7280' : ring || BS_KINDS[info.kind].ring;
+  const e = info.img ? bsImage(info.img, () => { if (cv.isConnected) bmFaceDisc(cv, info, css, ring); }) : null;
+  const im = e && e.img;
+  if (!im && info.img && !info.down) return bsDisc(cv, { ...info, img: null }, css, { ring }); // initials until the image arrives
+  if (!im || info.down || im.height / im.width < 1.15) return bsDisc(cv, info, css, { ring });
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5), px = Math.round(css * dpr), x = cv.getContext('2d');
+  cv.width = px; cv.height = px; cv.style.width = css + 'px'; cv.style.height = css + 'px';
+  const side = im.width * 0.62, sx = (im.width - side) / 2, sy = im.height * 0.05, lw = Math.max(2, px * 0.075), R = px / 2;
+  x.clearRect(0, 0, px, px);
+  x.save(); x.beginPath(); x.arc(R, R, R - lw * 0.6, 0, BS_TAU); x.clip();
+  x.imageSmoothingQuality = 'high'; x.drawImage(im, sx, sy, side, side, 0, 0, px, px); x.restore();
+  x.beginPath(); x.arc(R, R, R - lw / 2, 0, BS_TAU); x.lineWidth = lw; x.strokeStyle = ring; x.stroke();
+  x.beginPath(); x.arc(R, R, R - lw - 0.5, 0, BS_TAU); x.lineWidth = 1; x.strokeStyle = 'rgba(0,0,0,.4)'; x.stroke();
+  return cv;
+}
+
 // token tray: encounter combatants not yet on this scene
 function bmRenderTray() {
   const el = $('#bm-tray'), sc = bmScene(); if (!el) return;
   if (!sc) { el.classList.add('hidden'); return; }
   const enc = BM.enc || bmEncView(), placed = new Set(sc.tokens.map(t => t.combatantId).filter(Boolean));
   const todo = (enc.combatants || []).map((c, i) => ({ c, i })).filter(x => !x.c.id || !placed.has(x.c.id));
+  // a compact tray only while someone is still waiting to be placed (Add a token lives on the rail)
+  if (!todo.length) { el.classList.add('hidden'); el.innerHTML = ''; el.dataset.sig = ''; return; }
   el.classList.remove('hidden');
   const sig = JSON.stringify([todo.map(x => [x.i, x.c.name, x.c.hp, x.c.characterId, x.c.monster]), (enc.combatants || []).length]);
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
-  el.innerHTML = `${todo.length > 1 ? `<button class="bm-tray-all" id="bm-add-all" title="Place every combatant on the map">${ic('userplus')}<span>Add all<b>${todo.length}</b></span></button>` : ''}
-    <div class="bm-tray-list">${todo.map(x => `<button class="bm-tray-item" data-i="${x.i}" title="${esc(x.c.name)} · drag onto the map, or click to place"><canvas></canvas><span>${esc(bsBaseName(x.c.name) || '—')}${bsNumber(x.c.name) ? ` <i>${bsNumber(x.c.name)}</i>` : ''}</span></button>`).join('')}
-    ${todo.length ? '' : `<span class="bm-tray-empty">${(enc.combatants || []).length ? 'Every combatant is on the map' : 'No encounter: build one on the DM tab'}</span>`}</div>
-    <button class="bm-tray-add" id="bm-add-tok" title="Add a token">${ic('plus')}<span>Token</span></button>`;
+  el.innerHTML = `<div class="bm-tray-head"><small>To place</small>${todo.length > 1 ? `<button class="bm-tray-all" id="bm-add-all" title="Place every combatant on the map">${ic('userplus')}<span>Add all</span><b>${todo.length}</b></button>` : '<span class="bm-tray-tip">Drag onto the map</span>'}</div>
+    <div class="bm-tray-list">${todo.map(x => `<button class="bm-tray-item" data-i="${x.i}" title="${esc(x.c.name)} · drag onto the map, or click to place"><canvas></canvas><span>${esc(bsBaseName(x.c.name) || '—')}${bsNumber(x.c.name) ? ` <i>${bsNumber(x.c.name)}</i>` : ''}</span></button>`).join('')}</div>`;
   el.querySelectorAll('.bm-tray-item').forEach(b => {
     const x = todo.find(y => y.i === Number(b.dataset.i));
-    bsDisc(b.querySelector('canvas'), bsCombatantInfo(x.c, RAW.characters, null), 40);
+    bsDisc(b.querySelector('canvas'), bsCombatantInfo(x.c, RAW.characters, null), 36);
     b.addEventListener('pointerdown', e => bmTrayDrag(e, b, x));
   });
   if ($('#bm-add-all')) $('#bm-add-all').onclick = () => bmAddAll();
-  $('#bm-add-tok').onclick = () => bmOpenNewToken();
 }
 function bmTokenFromCombatant(c) {
   const kind = bsKindOf(c);
@@ -788,10 +889,63 @@ function bmClosePop() {
 function bmOpenPop(kind, html, cls) {
   bmClosePop();
   const p = $('#bm-pop'); BM.pop = kind;
+  p.removeAttribute('style'); // the last popover's anchoring
   p.className = `bm-pop bm-glass ${cls || ''}`; p.innerHTML = html;
   bmRenderToolsState();
   return p;
 }
+// line a popover up with the button that opened it: beside a rail button, or above a bottom-bar button
+function bmAnchorPop(p, btn, side) {
+  if (!btn || !BM.root) return;
+  const r = btn.getBoundingClientRect(), R = BM.root.getBoundingClientRect();
+  if (side === 'left') p.style.top = Math.max(12, Math.min(r.top - R.top - 8, R.height - p.offsetHeight - 12)) + 'px';
+  else p.style.left = Math.max(12, Math.min(r.left - R.left, R.width - p.offsetWidth - 12)) + 'px';
+}
+
+// ---------- the app's tabs, folded into one menu while the map is full-bleed ----------
+function bmOpenAppMenu() {
+  const tabs = $$('#tabs .tab').filter(b => !b.classList.contains('hidden'));
+  const pins = $$('#pin-pick option').filter(o => o.value && !o.hidden && o.value !== 'battlemap');
+  const pinned = ($('#pin-pick') || {}).value || '';
+  const role = { player: 'Player', dm: 'DM', admin: 'Admin' }[S.me && S.me.role] || '', dark = document.documentElement.dataset.theme !== 'light';
+  const live = $('#live-dot') && $('#live-dot').classList.contains('on');
+  const p = bmOpenPop('app', `<div class="bm-pop-head"><b>${ic('goat')} Goat Crew</b><span class="bm-app-who" title="${live ? 'Live: changes sync' : 'Not connected'}"><i class="bm-dot ${live ? 'live' : ''}"></i>${esc((S.me && S.me.name) || '')}${role ? ` · ${role}` : ''}</span></div>
+    <div class="bm-appgrid" role="menu">${tabs.map(b => `<button role="menuitem" class="bm-apptab ${b.dataset.tab === 'battlemap' ? 'on' : ''} ${b.classList.contains('dm-only') ? 'dm' : ''}" data-go="${esc(b.dataset.tab)}">${b.innerHTML}</button>`).join('')}</div>
+    ${pins.length ? `<label>Pin a panel beside the map</label><div class="bm-pins">${pins.map(o => `<button class="${o.value === pinned ? 'on' : ''}" data-pin="${esc(o.value)}">${esc(o.textContent)}</button>`).join('')}</div>` : ''}
+    <div class="bm-pop-actions">
+      <button class="btn small" id="bm-app-theme">${ic(dark ? 'sun' : 'moon')} ${dark ? 'Light' : 'Dark'} theme</button>
+      <button class="btn small" id="bm-app-fs">${ic(document.fullscreenElement ? 'minimize' : 'maximize')} ${document.fullscreenElement ? 'Exit full screen' : 'Full screen'}</button>
+      <button class="btn small ghost" id="bm-app-out">${ic('logout')} Log out</button>
+    </div>`, 'bm-pop-app');
+  p.querySelectorAll('[data-go]').forEach(b => b.onclick = () => {
+    const tab = $(`#tabs .tab[data-tab="${b.dataset.go}"]`); bmClosePop();
+    if (tab && b.dataset.go !== 'battlemap') tab.click();
+  });
+  p.querySelectorAll('[data-pin]').forEach(b => b.onclick = () => {
+    const pick = $('#pin-pick'); if (!pick) return;
+    pick.value = pick.value === b.dataset.pin ? '' : b.dataset.pin; pick.dispatchEvent(new Event('change'));
+    bmClosePop();
+  });
+  p.querySelector('#bm-app-theme').onclick = () => {
+    const to = dark ? 'light' : 'dark';
+    if (window.gcTheme) window.gcTheme.set(to); else { const t = $('#theme-toggle'); if (t) t.click(); }
+    bmOpenAppMenu();
+  };
+  p.querySelector('#bm-app-fs').onclick = () => { bmClosePop(); bmToggleFs(); };
+  p.querySelector('#bm-app-out').onclick = () => { const o = $('#logout'); bmClosePop(); if (o) o.click(); };
+  const first = p.querySelector('.bm-apptab.on') || p.querySelector('.bm-apptab'); if (first) first.focus({ preventScroll: true });
+}
+function bmToggleFs() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => toast('Full screen was blocked by the browser'));
+}
+function bmRenderFsBtn() {
+  const b = $('#bm-fs'); if (!b) return;
+  const on = !!document.fullscreenElement;
+  b.innerHTML = ic(on ? 'minimize' : 'maximize'); b.dataset.tip = on ? 'Exit full screen' : 'Full screen'; b.setAttribute('aria-label', b.dataset.tip);
+  b.classList.toggle('on', on);
+}
+document.addEventListener('fullscreenchange', () => { if (bmMounted()) { bmRenderFsBtn(); bmFitHeight(); } });
 function bmOpenScenes() {
   const d = BM.doc, cur = BM.sceneId;
   const p = bmOpenPop('scenes', `<div class="bm-pop-head"><b>Scenes</b><span class="muted">${d.scenes.length}</span></div>
@@ -931,6 +1085,7 @@ function bmOpenGrid() {
     <div class="bm-row bm-g-across"><span>Map is</span><input type="number" id="bm-g-across" min="2" max="200" value="${Math.round(w / g.size * 10) / 10}" step="0.5"><span>squares wide</span></div>`)}
     <label>Diagonals</label>${bmSeg('grule', [['5', '5 ft each'], ['alt', '5 / 10 ft'], ['euclid', 'True']], rule)}
     <p class="bm-note">1 square = 5 ft.${img ? '' : ' A blank scene is sized in squares, so only the look of its grid changes here.'} Changes show live, on the TV too.</p>`, 'bm-pop-grid');
+  bmAnchorPop(p, $('#bm-grid-btn'), 'left');
   // live edits go through the save queue (they survive the other DM's updates); one undo step when the panel closes
   const sid = sc.id, live = patch => {
     const cur = bmScene(sid); if (!cur) return;
@@ -969,6 +1124,7 @@ function bmOpenDisplayPop() {
     <div class="bm-radios">${[['dm', 'Follow my view', 'video'], ['fit', 'Fit the revealed area', 'scan'], ['locked', 'Locked', 'lock']].map(([k, label, icn]) => `<button class="bm-radio ${d.follow === k ? 'on' : ''}" data-follow="${k}">${ic(icn)}<span>${label}</span></button>`).join('')}</div>
     <button class="btn small bm-wide" id="bm-d-lock">${ic('lock')} Lock the TV to my current view</button>
     <label class="bm-switch"><input type="checkbox" id="bm-d-init" ${d.showInit !== false ? 'checked' : ''}><span></span> Initiative ribbon on the TV</label>`, 'bm-pop-display');
+  bmAnchorPop(p, $('#bm-cast'));
   const setD = (k, v, label) => bmCommit(label, [{ coll: 'display', id: k, before: BM.doc.display[k], after: v }], { undo: false });
   p.querySelector('#bm-d-open').onclick = () => { bmClosePop(); bmOpenDisplay(); };
   if (p.querySelector('#bm-d-this')) p.querySelector('#bm-d-this').onclick = () => { bmShowOnTv(sc.id); bmOpenDisplayPop(); };
@@ -984,6 +1140,7 @@ function bmOpenNewToken() {
     <label>Side</label><div class="bm-seg bm-kinds">${Object.entries(BS_KINDS).map(([k, x]) => `<button class="${k === 'neutral' ? 'on' : ''}" data-tkind="${k}" style="--c:${x.ring}"><i></i>${x.label}</button>`).join('')}</div>
     <label>Size</label><div class="bm-seg">${BS_SIZES.map(([n, name, s]) => `<button class="${n === 1 ? 'on' : ''}" data-tsize="${n}" title="${name}">${s}</button>`).join('')}</div>
     <div class="bm-row bm-insp-foot"><button class="btn primary small" id="bm-t-add">Place token</button></div>`, 'bm-pop-token');
+  bmAnchorPop(p, $('#bm-add-tok'), 'left');
   let kind = 'neutral', size = 1;
   p.querySelectorAll('[data-tkind]').forEach(b => b.onclick = () => { kind = b.dataset.tkind; p.querySelectorAll('[data-tkind]').forEach(x => x.classList.toggle('on', x === b)); });
   p.querySelectorAll('[data-tsize]').forEach(b => b.onclick = () => { size = Number(b.dataset.tsize); p.querySelectorAll('[data-tsize]').forEach(x => x.classList.toggle('on', x === b)); });
@@ -999,7 +1156,7 @@ function bmOpenNewToken() {
   };
   p.querySelector('#bm-t-add').onclick = add;
   p.querySelector('#bm-t-name').onkeydown = e => { if (e.key === 'Enter') add(); };
-  setTimeout(() => p.querySelector('#bm-t-name').focus(), 30);
+  setTimeout(() => { const n = p.querySelector('#bm-t-name'); if (n) n.focus(); }, 30); // the popover may already be closed
 }
 
 // ---------- pointer, wheel and keyboard ----------
@@ -1015,6 +1172,9 @@ function bmBind() {
   st.addEventListener('contextmenu', e => e.preventDefault());
   $('#bm-scene-btn').onclick = () => (BM.pop === 'scenes' ? bmClosePop() : bmOpenScenes());
   $('#bm-cast').onclick = () => (BM.pop === 'display' ? bmClosePop() : bmOpenDisplayPop());
+  $('#bm-app').onclick = () => (BM.pop === 'app' ? bmClosePop() : bmOpenAppMenu());
+  $('#bm-fs').onclick = () => bmToggleFs();
+  bmRenderFsBtn(); bmTips();
   // drop an image anywhere on the map to start a scene
   const drop = $('#bm-drop'), root = BM.root; let depth = 0;
   const hasFile = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
@@ -1022,7 +1182,7 @@ function bmBind() {
   root.addEventListener('dragover', e => { if (hasFile(e)) e.preventDefault(); });
   root.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) drop.classList.add('hidden'); });
   root.addEventListener('drop', e => { if (!hasFile(e)) return; e.preventDefault(); depth = 0; drop.classList.add('hidden'); const f = e.dataTransfer.files[0]; if (f) bmCreateFromFile(f, ''); });
-  root.addEventListener('pointerdown', e => { if (BM.pop && !e.target.closest('#bm-pop, #bm-scene-btn, #bm-cast, #bm-grid-btn, #bm-add-tok')) bmClosePop(); }, true);
+  root.addEventListener('pointerdown', e => { if (BM.pop && !e.target.closest('#bm-pop, #bm-scene-btn, #bm-cast, #bm-grid-btn, #bm-add-tok, #bm-app')) bmClosePop(); }, true);
 }
 const bmLocal = e => { const r = BM.stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
 function bmDown(e) {
@@ -1279,6 +1439,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (k === 'Enter' && BM.fogPoly) { e.preventDefault(); bmFogPolyClose(); return; }
+  if (k === '\\') { e.preventDefault(); bmToggleFs(); return; }
   if (!bmScene()) return;
   if (k === 'Delete' || k === 'Backspace') { if (v.sel.size || v.selDrawing) { e.preventDefault(); bmDeleteSelection(); } return; }
   if (k.startsWith('Arrow') && v.sel.size) {
@@ -1292,10 +1453,42 @@ document.addEventListener('keydown', e => {
   const tool = BM_TOOLS.find(t => t.key === lk);
   if (tool) { e.preventDefault(); bmSetTool(tool.id); return; }
   if (lk === 'g') { e.preventDefault(); BM.pop === 'grid' ? bmClosePop() : bmOpenGrid(); return; }
+  if (lk === 'a') { e.preventDefault(); BM.pop === 'token' ? bmClosePop() : bmOpenNewToken(); return; }
+  if (lk === 'l') { e.preventDefault(); bmToggleLabels(); return; }
   if (lk === 'n' && !$('#b-next')) { e.preventDefault(); bmTurn(1); return; }
   if (lk === '+' || lk === '=') { bmZoomBy(1.35); return; }
   if (lk === '-' || lk === '_') { bmZoomBy(1 / 1.35); return; }
-  if (lk === '0') { bmFit(true); }
+  if (lk === '0' || e.code === 'Digit0') { bmFit(true, e.shiftKey); } // 0 fits the action, Shift-0 the whole map
 });
+
+// tooltips: the name and its shortcut, beside the rail, above the bottom bar, below everything else
+function bmTips() {
+  const root = BM.root, tip = document.createElement('div');
+  tip.className = 'bm-tip'; tip.setAttribute('role', 'tooltip'); root.appendChild(tip);
+  let timer = 0, cur = null, lastShown = 0;
+  const hide = () => { clearTimeout(timer); if (tip.classList.contains('show')) lastShown = performance.now(); cur = null; tip.classList.remove('show'); };
+  const show = el => {
+    if (!el.isConnected || !el.dataset.tip) return;
+    tip.innerHTML = `<span>${esc(el.dataset.tip)}</span>${el.dataset.key ? `<kbd>${esc(el.dataset.key)}</kbd>` : ''}`;
+    const side = el.closest('.bm-tools') ? 'left' : el.closest('.bm-bottom') ? 'top' : 'bottom';
+    const r = el.getBoundingClientRect(), R = root.getBoundingClientRect();
+    tip.dataset.side = side; tip.classList.add('show');
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    const x = side === 'left' ? r.left - R.left - w - 10 : r.left - R.left + r.width / 2 - w / 2;
+    const y = side === 'left' ? r.top - R.top + r.height / 2 - h / 2 : side === 'top' ? r.top - R.top - h - 10 : r.bottom - R.top + 10;
+    tip.style.left = bsClamp(x, 8, R.width - w - 8) + 'px'; tip.style.top = bsClamp(y, 8, R.height - h - 8) + 'px';
+  };
+  root.addEventListener('pointerover', e => {
+    if (e.pointerType === 'touch') return;
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (el === cur) return;
+    hide(); if (!el || !root.contains(el)) return;
+    cur = el; timer = setTimeout(() => show(el), performance.now() - lastShown < 400 ? 0 : 380); // sweeping along the rail shows each at once
+  });
+  root.addEventListener('pointerout', e => { if (cur && !(e.relatedTarget && cur.contains(e.relatedTarget))) hide(); });
+  root.addEventListener('pointerdown', () => { hide(); lastShown = 0; }, true);
+  root.addEventListener('focusin', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el && el.matches(':focus-visible')) { hide(); cur = el; show(el); } });
+  root.addEventListener('focusout', hide);
+}
 document.addEventListener('keyup', e => { if (e.key === ' ' && BM.space) { BM.space = false; if (BM.stage) BM.stage.classList.remove('space'); } });
 window.addEventListener('blur', () => { if (BM.space) { BM.space = false; if (BM.stage) BM.stage.classList.remove('space'); } });
