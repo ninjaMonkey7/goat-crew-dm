@@ -196,16 +196,17 @@ svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px var(--plan-
 .plan-compass-n { fill: var(--plan-ink); font: 700 18px "Cormorant Garamond", Georgia, serif; pointer-events: none; }
 
 /* ---------- Battle tab: initiative tracker ---------- */
-/* One card, up to 960px: a header (round, whose turn, turn controls) over the turn order. A DM on a wide
-   screen gets a 320px details pane at the right (.bt-wide); narrower, a row's details open under it
+/* One card that grows with the page up to 1100px: a header (round, whose turn, turn controls) over the turn
+   order. A DM on a wide screen gets a fixed 300px details pane at the right (.bt-wide); the list takes the
+   rest, and its height sets the card's (the pane scrolls inside it). Narrower, a row's details open under it
    (.bt-stack). The list's columns follow the list's own width (container queries):
-   init · token · name · AC · HP · conditions · concentration, folding to init · token · name · HP on a phone. */
-:is(main, #content):has(> .bt-wrap > .bt-dm) { max-width: 988px; } /* 960px card + the page padding */
+   init · token · name (conditions as chips under it) · AC · HP · concentration, folding to init · token · name · HP on a phone. */
+:is(main, #content):has(> .bt-wrap > .bt-dm) { max-width: calc(1100px + 2 * 14px); } /* the card + the page padding */
 .bt-wrap { container: bt / inline-size; }
 .bt {
   --bt-hostile: var(--red); --bt-ally: var(--green); --bt-info: var(--info, var(--accent2));
   --bt-pane: color-mix(in srgb, var(--bg3) 55%, var(--bg2)); --bt-sel: color-mix(in srgb, var(--fg) 5%, var(--row-bg));
-  padding: 0; overflow: clip; max-width: 960px; margin-inline: auto;
+  padding: 0; overflow: clip; max-width: 1100px; margin-inline: auto;
 }
 .bt-player { max-width: 640px; }
 .bt .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -228,19 +229,24 @@ svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px var(--plan-
 
 /* body: list | details pane */
 .bt-body { display: grid; grid-template-columns: minmax(0, 1fr); }
-.bt-wide .bt-body { grid-template-columns: minmax(0, 1fr) clamp(272px, 34%, 320px); }
+.bt-wide .bt-body { grid-template-columns: minmax(0, 1fr) 300px; min-height: 380px; }
 .bt-main { min-width: 0; display: flex; flex-direction: column; container: btlist / inline-size; }
 .bt-pane { min-width: 0; border-left: 1px solid var(--line); background: var(--bt-pane); }
+/* the pane never makes the card taller than the list: it takes the list's height (size containment), keeps its
+   details in view while the page scrolls, and scrolls them itself when a stat block is longer */
+.bt-wide .bt-pane { contain: size; }
+.bt-wide .bt-pane > .bt-detail { position: sticky; top: calc(var(--top-h, 52px) + 8px); max-height: min(100%, calc(100dvh - var(--top-h, 52px) - 16px));
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--tint-3) transparent; }
 
-/* columns: one template for the labels and the rows */
+/* columns: one template for the labels and the rows. Conditions have no column (they're chips under the name);
+   concentration is an icon column whose header shows only while someone is concentrating. */
 .bt-cols, .bt-row { display: grid; align-items: center; column-gap: 10px; padding: 0 12px 0 22px;
-  grid-template-columns: 30px 32px minmax(0, 1fr) 36px 68px minmax(0, .8fr) 30px; grid-template-areas: "init av who ac hp cond conc"; }
-.bt-nocond :is(.bt-cols, .bt-row) { grid-template-columns: 30px 32px minmax(0, 1fr) 36px 68px 112px 30px; } /* nobody has a condition yet: the name gets the room */
+  grid-template-columns: 30px 32px minmax(0, 1fr) 40px 72px 32px; grid-template-areas: "init av who ac hp conc"; }
 .bt-player .bt-row { grid-template-columns: 30px 32px minmax(0, 1fr); grid-template-areas: "init av who"; padding-left: 18px; min-height: 50px; }
 .bt-cols { min-height: 34px; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); }
 .bt-cols .c-init { grid-area: init; text-align: right; } .bt-cols .c-who { grid-column: av / who; }
 .bt-cols .c-ac { grid-area: ac; text-align: center; } .bt-cols .c-hp { grid-area: hp; text-align: center; }
-.bt-cols .c-cond { grid-area: cond; } .bt-cols .c-conc { grid-area: conc; text-align: center; }
+.bt-cols .c-conc { grid-area: conc; display: grid; place-items: center; } .bt-cols .c-conc .ic { width: 15px; height: 15px; }
 
 /* rows */
 .bt-list { display: flex; flex-direction: column; }
@@ -262,7 +268,7 @@ svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px var(--plan-
 /* controls that only show on hover / focus / the selected row: no placeholder pills at rest */
 .bt-ghost { opacity: 0; transition: opacity .12s; }
 .bt-row:hover .bt-ghost, .bt-row:focus-within .bt-ghost, .bt-ghost:focus-visible { opacity: 1; }
-.bt-cell-btn, .bt-init, .bt-ac, .bt-hp-add, .bt-cond, .bt-conc, .bt-grip { font: inherit; color: inherit; background: none; border: 1px solid transparent; padding: 0; margin: 0; cursor: pointer; }
+.bt-cell-btn, .bt-init, .bt-ac, .bt-hp-unk, .bt-conds, .bt-cond-add, .bt-conc, .bt-grip { font: inherit; color: inherit; background: none; border: 1px solid transparent; padding: 0; margin: 0; cursor: pointer; }
 
 .bt-grip { position: absolute; left: 3px; top: 50%; translate: 0 -50%; width: 16px; height: 30px; display: grid; place-items: center; border-radius: 5px; color: var(--muted); cursor: grab; touch-action: none; }
 .bt-grip:hover { color: var(--fg); background: var(--tint-2); }
@@ -273,7 +279,7 @@ svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px var(--plan-
 .bt-init { grid-area: init; justify-self: end; min-width: 30px; height: 30px; padding: 0 4px; border-radius: 6px; text-align: right; font-size: 16px; font-weight: 650; line-height: 1; font-variant-numeric: tabular-nums; color: var(--fg); }
 .bt-player .bt-init { display: grid; align-items: center; }
 .bt-dm .bt-init { cursor: text; }
-.bt-dm :is(.bt-init, .bt-ac):hover { border-color: var(--line); background: var(--bg2); }
+.bt-dm :is(.bt-init, .bt-ac, .bt-hp-unk):hover { border-color: var(--line); background: var(--bg2); }
 
 /* avatar = the map token: portrait or token art, a ring by side, and the map's number badge */
 .bt-av { grid-area: av; position: relative; width: 32px; height: 32px; flex-shrink: 0; --ring: var(--line); }
@@ -297,16 +303,27 @@ svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px var(--plan-
 .bt-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
 .bt-name-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bt-you { flex-shrink: 0; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent2); background: var(--tint-accent2); border-radius: 999px; padding: 1px 7px; }
-.bt-sub { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; line-height: 1.35; color: var(--muted); }
+.bt-sub { display: flex; align-items: flex-start; gap: 6px; min-width: 0; font-size: 12.5px; line-height: 1.35; color: var(--muted); }
 .bt-sub:empty { display: none; }
-.bt-sub-t { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+/* up to two lines (app.js btFit cuts the rest at a word) */
+.bt-sub-t { flex: 1 1 auto; min-width: 0; max-height: calc(2 * 1.35em); overflow: hidden; overflow-wrap: anywhere; }
 .bt-sub-ac { flex-shrink: 0; font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; }
-.bt-sub > .bt-chips, .bt-sub-ac, .bt-name .bt-conc-mini { display: none; }
+.bt-sub-ac, .bt-name .bt-conc-mini { display: none; }
 .bt-conc-mini { color: var(--bt-info); } .bt-conc-mini .ic { width: 14px; height: 14px; }
+/* conditions: chips under the name; the DM clicks them to change. With none, "+ Condition" shows by the name on hover. */
+.bt-conds { align-self: flex-start; max-width: 100%; display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 1px; border-radius: 6px; text-align: left; }
+.bt-dm .bt-conds:hover .bt-chip:not(.sev) { background: var(--tint-3); }
+.bt-dm .bt-conds:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bt-cond-add { display: none; flex: none; align-items: center; gap: 2px; height: 22px; padding: 0 8px 0 5px; border-radius: 999px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.bt-cond-add .ic { width: 12px; height: 12px; }
+.bt-cond-add:hover { color: var(--fg); background: var(--tint-2); }
+.bt-row:is(:hover, :focus-within) .bt-cond-add { display: inline-flex; }
 
-.bt-ac { grid-area: ac; justify-self: center; width: 36px; height: 30px; border-radius: 6px; display: grid; place-items: center; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg); cursor: text; }
-.bt-ac.bt-ghost, .bt-hp-add, .bt-cond.bt-ghost { color: var(--muted); }
-.bt-ac .ic, .bt-hp-add .ic, .bt-cond .ic { width: 13px; height: 13px; }
+.bt-ac { grid-area: ac; justify-self: center; width: 40px; height: 30px; border-radius: 6px; display: grid; place-items: center; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg); cursor: text; }
+/* not known yet: a quiet dash (text, not a pill) that turns into a field on click */
+.bt-ac.unk, .bt-hp-unk { color: color-mix(in srgb, var(--muted) 75%, transparent); font-weight: 500; }
+.bt-hp-unk { grid-area: hp; justify-self: center; width: 68px; height: 30px; border-radius: 6px; display: grid; place-items: center; font-size: 14px; cursor: text; }
+.bt-dm :is(.bt-ac.unk, .bt-hp-unk):hover { color: var(--fg); }
 
 /* HP chip: tinted by what's left (green > 50% > amber > 25% > red), a 4px bar under the number; click to type */
 .bt-hp { --tone: var(--bt-ally); grid-area: hp; width: 68px; height: 38px; padding: 0 8px; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 4px;
@@ -317,13 +334,6 @@ svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px var(--plan-
 .bt-hp-val small { font-size: 11px; font-weight: 500; color: var(--muted); }
 .bt-hp-bar { display: block; height: 4px; border-radius: 2px; background: var(--hp-track); overflow: hidden; }
 .bt-hp-bar i { display: block; height: 100%; border-radius: 2px; background: var(--tone); transition: width .3s ease; }
-.bt-hp-add { grid-area: hp; justify-self: stretch; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; font-size: 12.5px; font-weight: 600; }
-.bt-hp-add:hover, .bt-cond.bt-ghost:hover, .bt-ac.bt-ghost:hover { color: var(--fg); background: var(--tint-2); }
-
-.bt-cond { grid-area: cond; min-width: 0; height: 32px; display: flex; align-items: center; gap: 4px; overflow: hidden; border-radius: 8px; text-align: left; }
-.bt-cond:not(.bt-ghost):hover { background: var(--tint-1); }
-.bt-cond.bt-ghost { gap: 3px; padding: 0 8px; width: max-content; max-width: 100%; font-size: 12.5px; font-weight: 600; }
-.bt-chips { display: flex; gap: 4px; min-width: 0; overflow: hidden; flex-shrink: 1; }
 .bt-chip { flex: none; display: inline-flex; align-items: center; gap: 2px; height: 20px; padding: 0 8px; border-radius: 999px; background: var(--tint-2);
   color: var(--fg); font-size: 11.5px; font-weight: 550; line-height: 1; white-space: nowrap; }
 .bt-chip.sev { background: color-mix(in srgb, var(--bt-hostile) 13%, transparent); color: color-mix(in srgb, var(--bt-hostile) 82%, var(--fg)); }
@@ -355,17 +365,20 @@ svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px var(--plan-
 .bt-d-id { min-width: 0; flex: 1; }
 .bt-d-id h3 { margin: 0; font-size: 17px; font-weight: 650; line-height: 1.25; overflow-wrap: anywhere; }
 .bt-d-sub { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
-.bt-d-now { flex-shrink: 0; align-self: flex-start; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); background: var(--tint-accent); border-radius: 999px; padding: 3px 8px; }
+.bt-d-now { display: inline-block; margin-bottom: 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; line-height: 1; color: var(--accent); background: var(--tint-accent); border-radius: 999px; padding: 3px 8px; }
 .bt-d-vitals { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .bt-d-tile { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 9px 10px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg2); }
 .bt-d-lbl { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); line-height: 1; }
-.bt-d-val { align-self: stretch; min-height: 26px; padding: 0 2px; margin: 0 -2px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--fg); text-align: left;
+.bt-d-val { align-self: stretch; display: flex; align-items: center; gap: 4px; min-height: 26px; padding: 0 2px; margin: 0 -2px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--fg); text-align: left;
   font: 650 20px/1.1 var(--sans); font-variant-numeric: tabular-nums; cursor: text; }
 .bt-d-val:hover { background: var(--tint-1); }
 .bt-d-val small { font-size: 13px; font-weight: 500; color: var(--muted); }
+.bt-d-v { min-width: 0; white-space: nowrap; }
+.bt-d-v.unk { color: color-mix(in srgb, var(--muted) 75%, transparent); font-weight: 500; }
+.bt-d-hint { flex: none; width: 13px; height: 13px; margin-left: auto; color: var(--muted); opacity: 0; transition: opacity .12s; }
+.bt-d-val:is(:hover, :focus-visible) .bt-d-hint { opacity: 1; }
 .bt-d-hp { --tone: var(--bt-ally); } .bt-d-hp .bt-d-val { color: color-mix(in srgb, var(--tone) 75%, var(--fg)); }
 .bt-d-hp.t-unk .bt-d-val { color: var(--fg); }
-.bt-d-set { font-size: 14px; font-weight: 600; color: var(--muted); }
 .bt-d-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: -6px; }
 .bt-pm { height: 34px; padding: 0; border: 1px solid var(--btn-line); border-radius: 8px; background: var(--btn-bg); box-shadow: var(--btn-shadow); color: var(--fg);
   font: 600 13px/1 var(--sans); font-variant-numeric: tabular-nums; cursor: pointer; transition: border-color .12s, color .12s, background .12s; }
@@ -399,6 +412,8 @@ svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px var(--plan-
 .bt-sb .badge { padding: 0 6px; font-weight: 600; color: var(--fg); }
 .bt-d-notes { margin: 0; color: var(--fg); font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bt-d-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+/* in the pane the foot stays put while a long stat block scrolls under it (the offset cancels the pane padding sticky insets by) */
+.bt-wide .bt-d-foot { position: sticky; bottom: -18px; margin: 0 -18px -18px; padding: 12px 18px 14px; background: var(--bt-pane); z-index: 1; }
 .bt-d-rm { margin-left: auto; color: var(--muted); }
 .bt-d-rm:hover, .bt-d-rm.armed { color: var(--bt-hostile); border-color: color-mix(in srgb, var(--bt-hostile) 45%, var(--btn-line)); }
 .bt-d-rm.armed { background: color-mix(in srgb, var(--bt-hostile) 9%, transparent); }
@@ -434,18 +449,19 @@ svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px var(--plan-
 @media (hover: none) {
   .bt-row { min-height: 60px; }
   .bt-pm { height: 44px; }
-  .bt-init, .bt-ac, .bt-conc { height: 40px; }
+  .bt-init, .bt-ac, .bt-hp-unk, .bt-conc { height: 40px; }
+  .bt-row:is(:hover, :focus-within) .bt-cond-add { display: none; } /* the details carry "Add" */
+  .bt-d-val .bt-d-v.unk + .bt-d-hint { opacity: .6; }
   .bt-grip { width: 22px; height: 40px; left: 0; }
   .bt-hp { height: 42px; }
   /* no hover here: the details (pane or open row) carry every control, so the ghosts stay hidden; ties keep their grip */
   .bt-row:is(:hover, :focus-within) .bt-ghost { opacity: 0; } .bt-row.sel .bt-grip, .bt-ghost:focus-visible { opacity: 1; }
 }
 
-/* the list gets narrower: conditions fold under the name */
+/* the list gets narrower: tighter columns, "+ Condition" becomes just the plus */
 @container btlist (max-width: 559px) {
-  .bt-dm :is(.bt-cols, .bt-row) { grid-template-columns: 30px 32px minmax(0, 1fr) 36px 68px 30px; grid-template-areas: "init av who ac hp conc"; }
-  .bt-dm .bt-row .bt-cond, .bt-cols .c-cond { display: none; }
-  .bt-sub > .bt-chips { display: flex; flex: 0 1 auto; }
+  .bt-dm :is(.bt-cols, .bt-row) { padding-right: 8px; }
+  .bt-cond-add { padding: 0 5px; } .bt-cond-add span { display: none; }
 }
 /* phone / the pinned side rail: init · token · name · HP; AC and concentration move into the name lines */
 @container btlist (max-width: 439px) {
@@ -453,6 +469,7 @@ svg.plan { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px var(--plan-
   .bt-player .bt-row { padding-left: 14px; }
   .bt-cols { display: none !important; }
   .bt-dm .bt-row :is(.bt-ac, .bt-conc) { display: none; }
+  .bt-hp-unk { justify-self: stretch; width: auto; }
   .bt-sub-ac, .bt-name .bt-conc-mini { display: inline-flex; }
   .bt-grip { left: 0; }
   .bt-init { min-width: 26px; padding: 0 2px; }

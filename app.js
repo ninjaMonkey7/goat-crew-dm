@@ -775,43 +775,46 @@ const shortName = u => String(u || '').replace(/\s*\((player|dm|co-dm)\)\s*$/i, 
 /* BT.sel: the row whose details show. null = follow whoever's turn it is; '' = none (closed on a narrow screen). */
 const BT = { sel: null, ro: null, raf: 0, flash: null, refocus: null, chain: null, pending: 0 };
 const BT_WIDE = 760; // card width (px) from which the details pane sits beside the list
+const BT_MAX = 1100; // the card grows with the page up to this (dm.css: .bt max-width)
 const BT_CONDITIONS = ['Blinded', 'Charmed', 'Deafened', 'Exhaustion', 'Frightened', 'Grappled', 'Incapacitated', 'Invisible',
   'Paralyzed', 'Petrified', 'Poisoned', 'Prone', 'Restrained', 'Stunned', 'Unconscious'];
 const BT_SEVERE = /^(incapacitated|paralyzed|petrified|stunned|unconscious)\b/i; // these cost the creature its turn
 const BT_GRIP = '<svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" aria-hidden="true"><circle cx="2.5" cy="3" r="1.3"/><circle cx="7.5" cy="3" r="1.3"/><circle cx="2.5" cy="8" r="1.3"/><circle cx="7.5" cy="8" r="1.3"/><circle cx="2.5" cy="13" r="1.3"/><circle cx="7.5" cy="13" r="1.3"/></svg>';
 const btNum = v => Number(v) || 0;
 const btKey = x => String(x.id || `${x.characterId || x.monster || ''}:${x.name || ''}`);
-const btColl = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const btMon = x => (x && x.monster && typeof BESTIARY !== 'undefined' && BESTIARY.find(b => b.id === x.monster)) || null;
 const btConds = x => (Array.isArray(x.conditions) ? x.conditions : []).filter(Boolean).map(String);
 const btAc = (x, ch, m) => (x.ac !== undefined && x.ac !== null && x.ac !== '') ? x.ac : (ch && ch.ac != null && ch.ac !== '') ? ch.ac : m ? m.ac : null;
 
 /* ----- turn order ----- */
-/* Ties: the Dex modifier where it's known (monsters, from the bestiary). A PC's usually isn't recorded,
-   so PCs go ahead of monsters on a tie; anyone else without one goes last. Then name. */
-const btDex = x => { const m = btMon(x); return m ? m.dex : x.characterId ? Infinity : -Infinity; };
-function btCmp(a, b) {
-  const d = btNum(b.init) - btNum(a.init); if (d) return d;
-  const da = btDex(a), db = btDex(b);
-  if (da !== db) return da > db ? -1 : 1;
-  return (b.characterId ? 1 : 0) - (a.characterId ? 1 : 0) || btColl.compare(String(a.name || ''), String(b.name || ''));
+/* The order itself is encounterOrder() in gh.js, shared with the battle map and the TV. Here the list is kept
+   in that order in place (so a tie is a run of neighbours the DM can drag), and every tied combatant carries
+   its place in the tie as `tie`, so every page that reads the file sees the DM's order. */
+function btStampTies(list) {
+  for (let i = 0; i < list.length;) {
+    let j = i + 1;
+    while (j < list.length && btNum(list[j].init) === btNum(list[i].init)) j++;
+    for (let k = i; k < j; k++) { if (j - i > 1) list[k].tie = k - i; else delete list[k].tie; }
+    i = j;
+  }
 }
-const btInOrder = list => list.every((x, i) => !i || btNum(list[i - 1].init) >= btNum(x.init));
 /* Put the combatants in turn order, in place, and keep the turn on the same combatant.
-   `moved` are rows just added or whose initiative changed: each goes to its place among its ties. The
-   rest keep their order, so a tie the DM dragged into place stays put. If the rest aren't in initiative
-   order (an encounter saved before this sorted), the whole list is sorted; `full` forces that. */
+   `moved` are rows just added or whose initiative changed: each goes to its natural place among its new ties
+   (Dex, PCs first, name). The rest keep the DM's order. `full` drops the DM's tie order and starts over. */
 function btSortEnc(enc, moved = [], full = false) {
   const list = enc.combatants || (enc.combatants = []);
   const active = list[Math.min(btNum(enc.turn), list.length - 1)];
   const mv = new Set(moved);
-  const order = list.filter(x => !mv.has(x));
-  if (full || !btInOrder(order)) order.sort(btCmp);
+  for (const x of list) if (full || mv.has(x)) delete x.tie;
+  const rest = list.filter(x => !mv.has(x));
+  const order = full ? rest.sort((a, b) => btNum(b.init) - btNum(a.init) || encounterTieCmp(a, b))
+    : encounterOrder({ combatants: rest }).map(i => rest[i]);
   for (const x of list.filter(x => mv.has(x))) {
-    const at = order.findIndex(y => btCmp(x, y) < 0);
+    const at = order.findIndex(y => btNum(y.init) < btNum(x.init) || (btNum(y.init) === btNum(x.init) && encounterTieCmp(x, y) < 0));
     order.splice(at < 0 ? order.length : at, 0, x);
   }
   list.splice(0, list.length, ...order);
+  btStampTies(list);
   if (active) enc.turn = list.indexOf(active);
   return enc;
 }
@@ -823,7 +826,7 @@ function btRemove(enc, i) {
   if (i < t) enc.turn = t - 1;
   else if (t >= list.length) { enc.turn = 0; if (list.length && i === t) enc.round = btNum(enc.round || 1) + 1; }
 }
-/* Every save from the Battle and DM tabs goes through here, so the file is in turn order from the first change on. */
+/* Every save from the Battle and DM tabs goes through here, so the file is in turn order, ties stamped, from the first change on. */
 function btSave(enc) {
   btSortEnc(enc);
   return api('/api/encounter', { method: 'PUT', body: enc });
@@ -883,7 +886,7 @@ function btAvatar(x, chars, isDM, size = '') {
     : glyph ? `<img class="bt-glyph" src="${glyph}" alt="">` : `<span>${esc(btInitials(x.name))}</span>`;
   return `<span class="bt-av ${side} ${size}" aria-hidden="true"><span class="bt-av-c">${face}</span>${num ? `<b class="bt-av-n">${num}</b>` : ''}</span>`;
 }
-/* One quiet line under the name: a PC's class, a monster's attacks (its AC has its own column), or the DM's note */
+/* Quiet text under the name (up to two lines): a PC's class, a monster's attacks (its AC has its own column), or the DM's note */
 function btSubText(x, ch, m) {
   const notes = String(x.notes || '').trim();
   if (x.characterId) return notes && !/^pc$/i.test(notes) ? notes : ch ? String(ch.klass || '') : '';
@@ -896,16 +899,17 @@ function btChips(conds, max = 99) {
   return shown.map(c => `<span class="bt-chip ${BT_SEVERE.test(c) ? 'sev' : ''}">${esc(c)}</span>`).join('')
     + (conds.length > shown.length ? `<span class="bt-chip more" title="${esc(conds.slice(shown.length).join(', '))}">+${conds.length - shown.length}</span>` : '');
 }
-/* Stat text stays on one line and is cut at a word boundary, with an ellipsis, never mid-word. */
+/* Stat text wraps to at most two lines (CSS caps the height) and is cut at a word boundary, with an ellipsis, never mid-word. */
 function btFit(root) {
   root.querySelectorAll('.bt-sub-t[data-full]').forEach(el => {
     const full = el.dataset.full;
     el.textContent = full;
-    if (!el.clientWidth || el.scrollWidth <= el.clientWidth + 1) return;
+    const fits = () => el.scrollHeight <= el.clientHeight + 1;
+    if (!el.clientHeight || fits()) return;
     const words = full.split(/\s+/);
     const cut = n => words.slice(0, n).join(' ').replace(/[\s·,;:+(–—-]+$/u, '') + '…';
     let lo = 0, hi = words.length - 1;
-    while (lo < hi) { const mid = (lo + hi + 1) >> 1; el.textContent = cut(mid); if (el.scrollWidth <= el.clientWidth + 1) lo = mid; else hi = mid - 1; }
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; el.textContent = cut(mid); if (fits()) lo = mid; else hi = mid - 1; }
     el.textContent = lo ? cut(lo) : '';
   });
 }
@@ -1006,21 +1010,26 @@ function btRowHTML(x, i, o) {
   const down = x.down ?? (h.max > 0 && h.hp <= 0);
   const name = esc(x.name || 'Unnamed');
   const cls = ['bt-row', i === o.turn && 'turn', o.mine(x) && 'mine', down && 'down', o.isDM && k === o.detailKey && 'sel', BT.flash === k && 'bt-flash'].filter(Boolean).join(' ');
-  const who = `<span class="bt-name">${down ? ic('skull', 'ic-red') : ''}<span class="bt-name-t">${name}</span>${o.mine(x) ? '<span class="bt-you">you</span>' : ''}${x.conc ? `<span class="bt-conc-mini" title="Concentrating">${ic('brain')}</span>` : ''}</span>`;
+  const conds = btConds(x);
+  // conditions sit under the name as chips (the DM clicks them to change); with none, a hover-only "+ Condition" by the name
+  const who = `<span class="bt-name">${down ? ic('skull', 'ic-red') : ''}<span class="bt-name-t">${name}</span>${o.mine(x) ? '<span class="bt-you">you</span>' : ''}${x.conc ? `<span class="bt-conc-mini" title="Concentrating">${ic('brain')}</span>` : ''}${o.isDM && !conds.length
+    ? `<button class="bt-cond-add" data-act="cond" data-k="${kk}" title="Add a condition" aria-label="Add a condition to ${name}">${ic('plus')}<span>Condition</span></button>` : ''}</span>`
+    + (conds.length ? (o.isDM ? `<button class="bt-conds" data-act="cond" data-k="${kk}" title="Conditions: click to change" aria-label="Conditions: ${esc(conds.join(', '))}. Click to change">${btChips(conds, 4)}</button>`
+      : `<span class="bt-conds">${btChips(conds, 4)}</span>`) : '');
   const cur = i === o.turn ? 'aria-current="true"' : '';
   if (!o.isDM) return `<div class="${cls}" role="listitem" ${cur}><span class="bt-init">${esc(x.init ?? '')}</span>${btAvatar(x, o.chars, false)}<span class="bt-who">${who}</span></div>`;
-  const conds = btConds(x), ac = btAc(x, ch, m), sub = btSubText(x, ch, m);
+  const ac = btAc(x, ch, m), sub = btSubText(x, ch, m);
   const prev = o.list[i - 1], next = o.list[i + 1];
   const tie = (prev && btNum(prev.init) === btNum(x.init)) || (next && btNum(next.init) === btNum(x.init));
+  // unknown AC / HP: a quiet dash, not a pill; click it to type a value
   return `<div class="${cls}" role="listitem" tabindex="0" data-k="${kk}" ${cur}>
     ${tie ? `<button class="bt-grip bt-ghost" data-act="grip" data-k="${kk}" title="Tied on initiative: drag to reorder" aria-label="Reorder ${name} among the tie (arrow keys)">${BT_GRIP}</button>` : ''}
     <button class="bt-init" data-act="init" data-k="${kk}" title="Initiative: click to change" aria-label="Initiative ${esc(x.init ?? 0)}. Click to change">${esc(x.init ?? 0)}</button>
     ${btAvatar(x, o.chars, true)}
-    <span class="bt-who">${who}<span class="bt-sub">${ac != null ? `<span class="bt-sub-ac">AC ${esc(ac)}</span>` : ''}${conds.length ? `<span class="bt-chips">${btChips(conds, 3)}</span>` : ''}${sub ? `<span class="bt-sub-t" data-full="${esc(sub)}" title="${esc(sub)}">${esc(sub)}</span>` : ''}</span></span>
-    <button class="bt-ac ${ac == null ? 'bt-ghost' : ''}" data-act="ac" data-k="${kk}" title="Armour class: click to change" aria-label="${ac == null ? `Set AC for ${name}` : `AC ${esc(ac)}. Click to change`}">${ac == null ? ic('plus') : esc(ac)}</button>
+    <span class="bt-who">${who}${ac != null || sub ? `<span class="bt-sub">${ac != null ? `<span class="bt-sub-ac">AC ${esc(ac)}</span>` : ''}${sub ? `<span class="bt-sub-t" data-full="${esc(sub)}" title="${esc(sub)}">${esc(sub)}</span>` : ''}</span>` : ''}</span>
+    <button class="bt-ac ${ac == null ? 'unk' : ''}" data-act="ac" data-k="${kk}" title="${ac == null ? 'AC not set: click to add it' : 'Armour class: click to change'}" aria-label="${ac == null ? `AC not set for ${name}. Click to add it` : `AC ${esc(ac)}. Click to change`}">${ac == null ? '—' : esc(ac)}</button>
     ${h.known ? `<button class="bt-hp t-${h.tone}" data-act="hp" data-k="${kk}" title="Set HP: 12, 12/30, −7 or +5" aria-label="HP ${h.hp}${h.max ? ' of ' + h.max : ''}. Click to set">${btHpInner(h)}</button>`
-      : `<button class="bt-hp-add bt-ghost" data-act="hp" data-k="${kk}" title="Track HP: 12 or 12/30" aria-label="Track HP for ${name}">${ic('plus')}HP</button>`}
-    <button class="bt-cond ${conds.length ? '' : 'bt-ghost'}" data-act="cond" data-k="${kk}" title="Conditions: click to change" aria-label="${conds.length ? `Conditions: ${esc(conds.join(', '))}` : 'Add a condition'}">${conds.length ? btChips(conds, 2) : `${ic('plus')}<span>Condition</span>`}</button>
+      : `<button class="bt-hp-unk" data-act="hp" data-k="${kk}" title="HP not tracked: click to add it (12 or 12/30)" aria-label="HP not tracked for ${name}. Click to add it">—</button>`}
     <button class="bt-conc ${x.conc ? 'on' : 'bt-ghost'}" data-act="conc" data-k="${kk}" aria-pressed="${!!x.conc}" title="${x.conc ? 'Concentrating: click to end it' : 'Mark as concentrating'}" aria-label="Concentrating">${ic('brain')}</button>
   </div>`;
 }
@@ -1031,17 +1040,17 @@ function btDetailHTML(x, i, o) {
     : m ? `${m.name} · CR ${m.cr}` : x.characterId ? 'Player character' : '';
   const notes = String(x.notes || '').trim();
   const ownNotes = notes && !/^pc$/i.test(notes) && !(m && /^AC\s*\d+\s*·/i.test(notes)) ? notes : '';
-  const set = '<span class="bt-d-set">Set</span>';
+  // each value is typed in place; an unknown one is a quiet dash, and hovering any of them shows the pencil
+  const val = (txt, known) => `<span class="bt-d-v ${known ? '' : 'unk'}">${txt}</span>${ic('pencil', 'bt-d-hint')}`;
   return `<section class="bt-detail" aria-label="${name}">
     <div class="bt-d-head">${btAvatar(x, o.chars, true, 'lg')}
-      <div class="bt-d-id"><h3>${name}</h3>${sub ? `<div class="bt-d-sub">${esc(sub)}</div>` : ''}</div>
-      ${i === o.turn ? '<span class="bt-d-now">Their turn</span>' : ''}</div>
+      <div class="bt-d-id">${i === o.turn ? '<span class="bt-d-now">Their turn</span>' : ''}<h3>${name}</h3>${sub ? `<div class="bt-d-sub">${esc(sub)}</div>` : ''}</div></div>
     <div class="bt-d-vitals">
       <div class="bt-d-tile bt-d-hp t-${h.tone}"><span class="bt-d-lbl">HP</span>
-        <button class="bt-d-val" data-act="hp" data-k="${kk}" title="Set HP: 12, 12/30, −7 or +5" aria-label="HP ${h.known ? h.hp + (h.max ? ' of ' + h.max : '') : 'not tracked'}. Click to set">${h.known ? `${h.hp}${h.max ? `<small>/${h.max}</small>` : ''}` : set}</button>
+        <button class="bt-d-val" data-act="hp" data-k="${kk}" title="${h.known ? 'Set HP: 12, 12/30, −7 or +5' : 'HP not tracked: click to add it (12 or 12/30)'}" aria-label="HP ${h.known ? h.hp + (h.max ? ' of ' + h.max : '') : 'not tracked'}. Click to set">${val(h.known ? `${h.hp}${h.max ? `<small>/${h.max}</small>` : ''}` : '—', h.known)}</button>
         ${h.max ? `<span class="bt-hp-bar"><i style="width:${h.pct}%"></i></span>` : ''}</div>
-      <div class="bt-d-tile"><span class="bt-d-lbl">AC</span><button class="bt-d-val" data-act="ac" data-k="${kk}" aria-label="AC ${ac ?? 'not set'}. Click to change">${ac != null ? esc(ac) : set}</button></div>
-      <div class="bt-d-tile"><span class="bt-d-lbl">Init</span><button class="bt-d-val" data-act="init" data-k="${kk}" aria-label="Initiative ${esc(x.init ?? 0)}. Click to change">${esc(x.init ?? 0)}</button></div>
+      <div class="bt-d-tile"><span class="bt-d-lbl">AC</span><button class="bt-d-val" data-act="ac" data-k="${kk}" title="${ac != null ? 'Armour class: click to change' : 'AC not set: click to add it'}" aria-label="AC ${ac ?? 'not set'}. Click to change">${val(ac != null ? esc(ac) : '—', ac != null)}</button></div>
+      <div class="bt-d-tile"><span class="bt-d-lbl">Init</span><button class="bt-d-val" data-act="init" data-k="${kk}" title="Initiative: click to change" aria-label="Initiative ${esc(x.init ?? 0)}. Click to change">${val(esc(x.init ?? 0), true)}</button></div>
     </div>
     ${h.known ? `<div class="bt-d-steps" role="group" aria-label="Adjust HP">${[-5, -1, 1, 5].map(d =>
       `<button class="bt-pm ${d < 0 ? 'dmg' : 'heal'}" data-act="hpd" data-d="${d}" data-k="${kk}" aria-label="${d < 0 ? 'Damage' : 'Heal'} ${Math.abs(d)}">${d < 0 ? '−' : '+'}${Math.abs(d)}</button>`).join('')}</div>` : ''}
@@ -1080,35 +1089,39 @@ function btDraw(c, enc, chars, isDM, measured) {
   const mine = x => !!(myId && x.characterId === myId);
   const active = list[turn];
   const activeIsMine = !isDM && active && (mine(active) || (myName && active.name && myName.toLowerCase().startsWith(String(active.name).toLowerCase())));
-  const nextUp = n > 1 ? list[(turn + 1) % n] : null;
+  // "Next" and the turn buttons step through the shared order (the list is already drawn in it)
+  const order = encounterOrder(enc), pos = Math.max(0, order.indexOf(turn));
+  const nextUp = n > 1 ? list[order[(pos + 1) % n]] : null;
+  const round = btNum(enc.round) || 1;
   const seen = {};
   const keys = list.map(x => { const k = btKey(x); seen[k] = (seen[k] || 0) + 1; return seen[k] > 1 ? `${k}#${seen[k]}` : k; });
   const idx = k => keys.indexOf(k);
   if (BT.sel && !keys.includes(BT.sel)) BT.sel = null;
   let width = measured;
   if (width == null) { const cs = getComputedStyle(c); width = c.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0); }
-  const wide = isDM && Math.min(width, 960) >= BT_WIDE;
+  const wide = isDM && Math.min(width, BT_MAX) >= BT_WIDE;
   const detailKey = !isDM ? null : BT.sel === '' ? (wide ? keys[turn] : null) : (BT.sel || keys[turn]);
   const o = { isDM, chars, charOf, keys, turn, mine, list, detailKey };
   const rows = list.map((x, i) => btRowHTML(x, i, o) + (isDM && !wide && keys[i] === detailKey ? `<div class="bt-xrow">${btDetailHTML(x, i, o)}</div>` : '')).join('');
   const di = wide ? idx(detailKey) : -1;
-  const anyCond = list.some(x => btConds(x).length);
-  c.innerHTML = `<div class="bt-wrap"><div class="card bt ${isDM ? 'bt-dm' : 'bt-player'} ${wide ? 'bt-wide' : 'bt-stack'} ${anyCond ? '' : 'bt-nocond'}">
+  const anyConc = list.some(x => x.conc);
+  const atStart = round <= 1 && pos === 0; // nothing before the first turn of the fight (as on the battle map)
+  c.innerHTML = `<div class="bt-wrap"><div class="card bt ${isDM ? 'bt-dm' : 'bt-player'} ${wide ? 'bt-wide' : 'bt-stack'}">
     <div class="bt-head">
       <div class="bt-title">
-        <span class="bt-round">Round <b>${btNum(enc.round) || 1}</b></span>
+        <span class="bt-round">Round <b>${round}</b></span>
         <span class="bt-now">${active ? `<span class="bt-now-who"><b>${esc(active.name || 'Unnamed')}</b>’s turn</span>` : ''}${nextUp ? `<span class="bt-next">Next: ${esc(nextUp.name || 'Unnamed')}</span>` : ''}</span>
       </div>
       ${isDM ? `<div class="bt-actions">
           <span class="bt-view" title="You see HP, AC and stat blocks; players see the order only">${ic('eye')} DM view</span>
-          <button class="btn small icon-btn" id="b-prev" data-act="prev" title="Previous turn" aria-label="Previous turn">${ic('skipback')}</button>
+          <button class="btn small icon-btn" id="b-prev" data-act="prev" title="${atStart ? 'This is the first turn of the fight' : 'Previous turn'}" aria-label="Previous turn" ${atStart ? 'disabled' : ''}>${ic('skipback')}</button>
           <button class="btn small primary" id="b-next" data-act="next" title="Next turn (N)">${ic('play')} Next turn <kbd class="bt-kbd">N</kbd></button>
         </div>` : `<span class="bt-live"><i></i>Live</span>`}
     </div>
     ${activeIsMine ? `<div class="your-turn">${ic('swords')} YOUR TURN</div>` : ''}
     <div class="bt-body">
       <div class="bt-main">
-        ${isDM ? `<div class="bt-cols" aria-hidden="true"><span class="c-init">Init</span><span class="c-who">Name</span><span class="c-ac">AC</span><span class="c-hp">HP</span><span class="c-cond">Conditions</span><span class="c-conc" title="Concentration">Conc</span></div>` : ''}
+        ${isDM ? `<div class="bt-cols" aria-hidden="true"><span class="c-init">Init</span><span class="c-who">Name</span><span class="c-ac">AC</span><span class="c-hp">HP</span>${anyConc ? `<span class="c-conc" title="Concentration">${ic('brain')}</span>` : ''}</div>` : ''}
         <div class="bt-list" role="list" aria-label="Turn order">${rows}</div>
         ${wide ? `<div class="bt-foot"><span><kbd class="bt-kbd">N</kbd> next turn</span><span>Click any number to change it</span>${list.some((x, i) => i && btNum(list[i - 1].init) === btNum(x.init)) ? `<span>${BT_GRIP} drag to reorder ties</span>` : ''}</div>` : ''}
       </div>
@@ -1126,7 +1139,7 @@ function btDraw(c, enc, chars, isDM, measured) {
       BT.raf = requestAnimationFrame(() => {
         if (!wrap.isConnected) return;
         const w = wrap.clientWidth;
-        if (w && isDM && (Math.min(w, 960) >= BT_WIDE) !== wide) redraw(w); else btFit(card);
+        if (w && isDM && (Math.min(w, BT_MAX) >= BT_WIDE) !== wide) redraw(w); else btFit(card);
       });
     });
     BT.ro.observe(wrap);
@@ -1147,12 +1160,13 @@ function btDraw(c, enc, chars, isDM, measured) {
     if (card.contains(document.activeElement)) BT.refocus = `.bt-row[data-k="${CSS.escape(k)}"]`;
     redraw();
   };
+  // forward past the last turn starts the next round; back past the first returns to the last round (not before round 1)
   const turnBy = dir => {
     const was = keys[turn];
-    let t = turn + dir;
-    if (t >= n) { t = 0; enc.round = (btNum(enc.round) || 1) + 1; }
-    else if (t < 0) { t = n - 1; enc.round = Math.max(1, (btNum(enc.round) || 1) - 1); }
-    enc.turn = t;
+    let p = pos + dir;
+    if (p >= n) { p = 0; enc.round = round + 1; }
+    else if (p < 0) { if (round <= 1) return; p = n - 1; enc.round = round - 1; }
+    enc.turn = order[p];
     if (wide || BT.sel === was) BT.sel = null; // the details follow the turn unless the DM is looking at someone else
     commit();
   };
@@ -1161,6 +1175,7 @@ function btDraw(c, enc, chars, isDM, measured) {
     if (i < 0 || j < 0 || j >= n || btNum(list[j].init) !== btNum(list[i].init)) return;
     const act = list[turn];
     [list[i], list[j]] = [list[j], list[i]];
+    btStampTies(list);
     enc.turn = list.indexOf(act);
     BT.refocus = `.bt-grip[data-k="${CSS.escape(k)}"]`;
     commit();
@@ -1268,6 +1283,7 @@ function btDraw(c, enc, chars, isDM, measured) {
       const act = list[turn];
       const [moved] = list.splice(a + from, 1);
       list.splice(a + to, 0, moved);
+      btStampTies(list);
       enc.turn = list.indexOf(act);
       BT.flash = k;
       commit();
