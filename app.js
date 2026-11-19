@@ -857,6 +857,16 @@ function btGlyph(x) {
     return e ? BT_GLYPH.get(e) : '';
   } catch (_) { return ''; }
 }
+/* The map token's own art (class emblem for a PC without a portrait, creature emblem for a monster, in its
+   ring) so a row matches its token on the battle map. Cached per class / creature. */
+const BT_ART = new Map();
+function btArt(x, ch, side) {
+  if (typeof bsTokenArt !== 'function') return '';
+  const key = `${side}|${ch ? 'pc:' + (ch.klass || '') : 'm:' + (x.monster || String(x.name || '').replace(/\s+\d+$/, ''))}`;
+  if (BT_ART.has(key)) return BT_ART.get(key);
+  try { const url = bsTokenArt({ ...x, name: String(x.name || '').replace(/\s+\d+$/, '') }, 72).toDataURL(); BT_ART.set(key, url); return url; }
+  catch (_) { return ''; }
+}
 function btInitials(name) {
   const w = String(name || '').replace(/\s+\d+$/, '').trim().split(/\s+/).filter(Boolean);
   return w.length ? (w.length === 1 ? w[0][0] : w[0][0] + w[w.length - 1][0]).toUpperCase() : '?';
@@ -866,8 +876,10 @@ function btAvatar(x, chars, isDM, size = '') {
   // the players' copy of the encounter has no monster ids, so their non-PC rows stay neutral
   const side = x.characterId ? 'pc' : x.monster ? 'foe' : isDM ? 'npc' : 'other';
   const num = x.characterId ? '' : (String(x.name || '').match(/\s(\d+)$/) || [])[1] || '';
-  const glyph = ch ? '' : btGlyph(x);
+  const art = ch && ch.portrait ? '' : btArt(x, ch, side);
+  const glyph = ch || art ? '' : btGlyph(x);
   const face = ch && ch.portrait ? `<img src="${esc(ch.portrait)}" alt="" loading="lazy">`
+    : art ? `<img class="bt-art" src="${art}" alt="">`
     : glyph ? `<img class="bt-glyph" src="${glyph}" alt="">` : `<span>${esc(btInitials(x.name))}</span>`;
   return `<span class="bt-av ${side} ${size}" aria-hidden="true"><span class="bt-av-c">${face}</span>${num ? `<b class="bt-av-n">${num}</b>` : ''}</span>`;
 }
