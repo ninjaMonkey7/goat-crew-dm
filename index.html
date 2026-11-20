@@ -48,6 +48,7 @@
 <link rel="stylesheet" href="dm.css">
 <link rel="stylesheet" href="battlemap.css">
 <link rel="stylesheet" href="admin.css">
+<link rel="stylesheet" href="sheet.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐐</text></svg>">
 </head>
 <body>
@@ -77,6 +78,18 @@
         <div class="row"><input id="login-owner" placeholder="owner" style="flex:1;min-width:0"><input id="login-repo" placeholder="repo" style="flex:1;min-width:0"><input id="login-branch" placeholder="branch" style="width:90px"></div>
         <p class="muted" style="font-size:12px;margin:6px 0 0">Settings are stored only in this browser.</p>
       </details>
+    </div>
+  </div>
+
+  <!-- Signed in, but the campaign can't be reached right now (network or GitHub hiccup): keep the session and retry -->
+  <div id="reconnect" class="hidden">
+    <div class="login-box">
+      <div class="invite-mark">🐐</div>
+      <h1>Can't reach the campaign</h1>
+      <p class="muted">You're still signed in. This is usually a dropped connection and fixes itself.</p>
+      <p id="reconnect-msg" class="muted" role="status" aria-live="polite"></p>
+      <button id="reconnect-now" class="btn primary" type="button">Try again now</button>
+      <button id="reconnect-out" class="btn ghost small" type="button">Sign in as someone else</button>
     </div>
   </div>
 
@@ -188,5 +201,6 @@
 <script src="chat.js"></script>
 <script src="admin.js"></script>
 <script src="app.js"></script>
+<script src="sheet.js"></script>
 </body>
 </html>

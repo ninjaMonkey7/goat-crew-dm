@@ -57,7 +57,8 @@ function b64decode(b64) {
 }
 
 // ---------- GitHub REST ----------
-function fail(code, msg) { const e = new Error(msg); e.code = code; if (typeof toast === 'function' && msg !== 'Not logged in') toast(msg, 3500); throw e; }
+let QUIET = 0; // background saves report through their own status line, not pop-ups
+function fail(code, msg) { const e = new Error(msg); e.code = code; if (typeof toast === 'function' && msg !== 'Not logged in' && !QUIET) toast(msg, 3500); throw e; }
 async function gh(path, opts = {}) {
   const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(opts.headers || {}) };
   if (workerMode()) { if (WSESSION) headers.Authorization = 'Bearer ' + WSESSION; }
@@ -123,6 +124,83 @@ async function save(name, mutate, message) {
   fail(409, 'Could not save: the other DM changed the same thing at the same moment. Try again.');
 }
 
+/* ---------- character sheets: one file per character, data/sheets/<id>.json ----------
+   Kept apart from characters.json so two players saving at once never collide, and so the party list stays small.
+   Fields the tracker and battle map use (name, race, class, level, AC, HP, conditions, gold) stay on the character. */
+const SHEETS = {};                                   // character id -> parsed sheet (loaded when first opened)
+const sheetPath = id => `data/sheets/${id}.json`;
+const SHEET_ID_RE = /^[a-z0-9_-]+$/i;
+async function readSheet(id) {
+  const path = sheetPath(id);
+  const r = await gh(repoPath(`contents/${encPath(path)}?ref=${encodeURIComponent(GH.branch)}`));
+  if (r.status === 404) { SHEETS[id] = {}; SHA[path] = null; return SHEETS[id]; } // no sheet yet: the first save creates it
+  if (!r.ok) fail(r.status, explain(r.status, path));
+  const j = await r.json();
+  SHA[path] = j.sha;
+  let v = {}; try { v = JSON.parse(b64decode(j.content || '')); } catch (_) { v = {}; }
+  SHEETS[id] = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  return SHEETS[id];
+}
+async function saveSheet(id, mutate, message) {
+  const path = sheetPath(id);
+  if (SHEETS[id] === undefined) await readSheet(id);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const next = mutate(structuredClone(SHEETS[id] || {}));
+    const body = { message: message || `${ME ? ME.name : 'app'}: sheet ${id}`, content: b64encode(JSON.stringify(next, null, 1) + '\n'), branch: GH.branch };
+    if (ME) body.author = { name: ME.name, email: `${ME.id}@goat-crew.local` };
+    if (SHA[path]) body.sha = SHA[path];
+    const r = await gh(repoPath(`contents/${encPath(path)}`), { method: 'PUT', body });
+    if (r.ok) { const j = await r.json(); SHA[path] = j.content.sha; advanceHead(j.commit); SHEETS[id] = next; return next; }
+    if (r.status === 409 || r.status === 422) { await readSheet(id); continue; } // someone else saved first: re-apply our edits on top of theirs
+    let msg = ''; try { msg = (await r.json()).message || ''; } catch (_) { /* ignore */ }
+    fail(r.status, msg && r.status !== 404 ? msg : explain(r.status, path));
+  }
+  fail(409, 'Could not save the sheet: it changed at the same moment on another screen. Try again.');
+}
+/* Sheet edits arrive as small operations, applied to the latest copy, so edits from two screens merge:
+   { op: 'set', p: 'abilities.str.score', v: 14 } · { op: 'add', p: 'attacks', v: { id, … } } · { op: 'del', p: 'attacks.@<rowId>' }
+   A path step "@id" picks the list row with that id (rows move when others add or delete, ids don't). */
+const SHEET_PATH_RE = /^[\w@-]+(\.[\w@-]+){0,5}$/;
+const BAD_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+function sheetWalk(root, segs, create) {
+  let cur = root;
+  for (let i = 0; i < segs.length - 1; i++) {
+    const s = segs[i];
+    let next;
+    if (s[0] === '@') { next = Array.isArray(cur) ? cur.find(x => x && x.id === s.slice(1)) : null; if (!next) return null; }
+    else {
+      next = cur[s];
+      if (next == null || typeof next !== 'object') { if (!create) return null; next = segs[i + 1][0] === '@' ? [] : {}; cur[s] = next; }
+    }
+    cur = next;
+  }
+  return cur;
+}
+function applySheetOps(sheet, ops) {
+  for (const o of ops || []) {
+    if (!o || typeof o.p !== 'string' || !SHEET_PATH_RE.test(o.p)) continue;
+    const segs = o.p.split('.');
+    if (segs.some(s => BAD_KEYS.has(s.replace(/^@/, '')))) continue;
+    const last = segs[segs.length - 1];
+    if (o.op === 'set') {
+      if (last[0] === '@') continue;
+      const parent = sheetWalk(sheet, segs, true);
+      if (parent && typeof parent === 'object' && !Array.isArray(parent)) parent[last] = o.v;
+    } else if (o.op === 'add') {
+      if (!o.v || typeof o.v !== 'object' || !o.v.id || last[0] === '@') continue;
+      const parent = sheetWalk(sheet, segs, true);
+      if (!parent || Array.isArray(parent)) continue;
+      if (!Array.isArray(parent[last])) parent[last] = [];
+      if (!parent[last].some(x => x && x.id === o.v.id)) parent[last].push(o.v);
+    } else if (o.op === 'del') {
+      if (last[0] !== '@' || segs.length < 2) continue;
+      const arr = sheetWalk(sheet, [...segs.slice(0, -1), 'x'], false); // walks the whole parent path: the list itself
+      if (Array.isArray(arr)) { const i = arr.findIndex(x => x && x.id === last.slice(1)); if (i >= 0) arr.splice(i, 1); }
+    }
+  }
+  return sheet;
+}
+
 /* Our own commit becomes the known head only if it sits directly on the head we last synced;
    otherwise the other DM committed in between and the next poll must still fetch their change. */
 function advanceHead(commit) {
@@ -176,20 +254,31 @@ async function syncTree(sha) {
     await readFile(name);
     onEntityChange(name, prev, RAW[name]);
   }));
+  // sheets someone has open on this screen: pick up edits made elsewhere
+  const sheetsChanged = Object.keys(SHEETS).filter(id => bySha[sheetPath(id)] && bySha[sheetPath(id)] !== SHA[sheetPath(id)]);
+  await Promise.all(sheetsChanged.map(async id => {
+    const prev = SHEETS[id];
+    try { await readSheet(id); } catch (e) { console.warn('sheet', e); return; }
+    onEntityChange('sheet', prev, SHEETS[id], id);
+  }));
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 
-function onEntityChange(entity, prev, next) {
+function onEntityChange(entity, prev, next, id) {
   if (typeof S === 'undefined' || !S.me) return;
   delete S.cache[entity];
-  if (LIVE_HOOKS[entity]) { try { LIVE_HOOKS[entity](prev, next); } catch (e) { console.error(e); } }
+  if (LIVE_HOOKS[entity]) { try { LIVE_HOOKS[entity](prev, next, id); } catch (e) { console.error(e); } }
   if (typeof onEntityEvent === 'function') onEntityEvent(entity, prev, next);
+  if (entity === 'sheet') return; // only an open sheet cares, and it updates itself in place (LIVE_HOOKS.sheet)
+  // an open character sheet updates field by field instead of re-rendering over what someone is typing
+  // 'main' / 'rail' / false: where an open sheet just updated itself, so that panel is not re-rendered
+  const sheetIn = entity === 'characters' && typeof S.sheetLive === 'function' ? S.sheetLive(next) : false;
   const typing = document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
   const tabEntity = { party: 'characters', battle: 'encounter', dice: 'rolls', board: 'notices', journal: 'journal', codex: 'codex', quests: 'quests', arc: 'arc', dm: entity }[S.tab];
-  if ((tabEntity === entity || S.tab === 'dm') && !S.formOpen && !typing) render();
+  if ((tabEntity === entity || S.tab === 'dm') && !S.formOpen && !typing && sheetIn !== 'main') render();
   // the pinned panel in the right rail follows the same entity (chat and map update in place via LIVE_HOOKS)
   const pinEntity = S.pin && S.pin !== S.tab ? { party: 'characters', battle: 'encounter', dice: 'rolls' }[S.pin] : null;
-  if (pinEntity === entity && !S.formOpen && !typing && typeof renderRail === 'function') renderRail();
+  if (pinEntity === entity && !S.formOpen && !typing && sheetIn !== 'rail' && typeof renderRail === 'function') renderRail();
 }
 
 // connectSSE keeps its old name — called from showMain() in app.js
@@ -430,8 +519,10 @@ async function adminRoute(path, method, body, user) {
 // ---------- api() — same signature app.js already uses ----------
 async function api(path, opts = {}) {
   const method = (opts.method || 'GET').toUpperCase();
+  if (opts.quiet) QUIET++;
   try { return await route(path, method, opts.body); }
-  catch (e) { if (!e.code) { console.error(e); if (typeof toast === 'function') toast(e.message || 'Error', 3500); } throw e; }
+  catch (e) { if (!e.code) { console.error(e); if (typeof toast === 'function' && !opts.quiet) toast(e.message || 'Error', 3500); } throw e; }
+  finally { if (opts.quiet) QUIET--; }
 }
 
 async function route(path, method, body) {
@@ -500,10 +591,25 @@ async function route(path, method, body) {
   if ((m = path.match(/^\/api\/characters\/([\w]+)$/)) && method === 'PATCH') {
     const c = RAW.characters.find(x => x.id === m[1]);
     if (!c) fail(404, 'Not found');
+    if (!isDM && user.characterId !== c.id) fail(403, 'You can only change your own character');
+    if (!isDM && body) delete body.dmNotes;
     const applied = {};
     for (const [k, v] of Object.entries(pickAllowed(body, CHAR_FIELDS))) if (JSON.stringify(c[k]) !== JSON.stringify(v)) { logHistory(user, 'character', c.id, k, c[k], v); applied[k] = v; }
     if (Object.keys(applied).length) await save('characters', arr => { Object.assign(arr.find(x => x.id === c.id), applied); return arr; }, `${who}: ${c.name} — ${Object.keys(applied).join(', ')}`);
     return charView(RAW.characters.find(x => x.id === c.id), user);
+  }
+  if ((m = path.match(/^\/api\/characters\/([\w-]+)\/sheet$/))) {
+    const c = RAW.characters.find(x => x.id === m[1]);
+    if (!c || !SHEET_ID_RE.test(c.id)) fail(404, 'Not found');
+    const editable = isDM || user.characterId === c.id;
+    if (method === 'GET') { if (SHEETS[c.id] === undefined || body === 'fresh') await readSheet(c.id); return { sheet: structuredClone(SHEETS[c.id]), editable }; }
+    if (method === 'POST') {
+      if (!editable) fail(403, 'You can only change your own character sheet');
+      const ops = Array.isArray(body && body.ops) ? body.ops.slice(0, 500) : [];
+      if (!ops.length) return { sheet: structuredClone(SHEETS[c.id] || {}), editable };
+      const next = await saveSheet(c.id, s => applySheetOps(s, ops), `${who}: ${c.name} — sheet (${ops.length} change${ops.length === 1 ? '' : 's'})`);
+      return { sheet: structuredClone(next), editable };
+    }
   }
   if ((m = path.match(/^\/api\/characters\/([\w]+)\/history$/)) && method === 'GET') {
     return [...RAW.history, ...pendingHistory].filter(h => h.entity === 'character' && h.entityId === m[1]).sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 50);

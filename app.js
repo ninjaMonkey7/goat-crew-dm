@@ -87,9 +87,34 @@ async function load(entity) {
 // ---------- login (GitHub token + which DM you are) ----------
 async function boot() {
   if (sessionStorage.getItem('gc_invite')) return showInvite();
-  try { S.me = await api('/api/me'); showMain(); }
-  catch (_) { showLogin(); }
+  try { S.me = await api('/api/me', { quiet: true }); hideReconnect(); showMain(); }
+  catch (e) {
+    // Only "not signed in" / "session over" goes to the sign-in form. A network or GitHub hiccup keeps the session and retries.
+    const hasSession = !!localStorage.getItem('gc_session') && !!(localStorage.getItem('gc_wsession') || localStorage.getItem('gc_gh_token'));
+    if (!hasSession || e.code === 401 || e.code === 403) { hideReconnect(); return showLogin(); }
+    showReconnect(e);
+  }
 }
+let reconnectTimer = null, reconnectTries = 0;
+function hideReconnect() { clearTimeout(reconnectTimer); reconnectTries = 0; const b = $('#reconnect'); if (b) b.classList.add('hidden'); }
+function showReconnect(e) {
+  const box = $('#reconnect');
+  if (!box) return showLogin(); // older cached page without the reconnect screen
+  $('#main').classList.add('hidden'); $('#login').classList.add('hidden');
+  box.classList.remove('hidden');
+  const wait = Math.min(30, 3 * ++reconnectTries);
+  let left = wait;
+  const msg = $('#reconnect-msg');
+  if (e) console.warn('boot: campaign unreachable', e);
+  const tick = () => { msg.textContent = `Trying again in ${left} s.`; };
+  tick();
+  clearTimeout(reconnectTimer);
+  const step = () => { left--; if (left <= 0) { msg.textContent = 'Trying again…'; boot(); } else { tick(); reconnectTimer = setTimeout(step, 1000); } };
+  reconnectTimer = setTimeout(step, 1000);
+  $('#reconnect-now').onclick = () => { clearTimeout(reconnectTimer); msg.textContent = 'Trying again…'; boot(); };
+  $('#reconnect-out').onclick = () => { hideReconnect(); showLogin(); };
+}
+window.addEventListener('online', () => { const b = $('#reconnect'); if (b && !b.classList.contains('hidden')) { clearTimeout(reconnectTimer); boot(); } });
 /* A sign-in link from the admin: check it, then let the person choose their own password. */
 async function showInvite() {
   const token = sessionStorage.getItem('gc_invite');
@@ -477,84 +502,38 @@ function setPin(tab) { S.pin = RAIL_TABS[tab] ? tab : ''; localStorage.setItem('
 function renderRail() { return syncRail(true); }
 
 // ---------- PARTY ----------
+/* sheet.js / sheet.css load from index.html. A browser still holding a cached older index.html (up to 10 minutes after
+   an update) won't have them, so fetch them on demand rather than fail. */
+function ensureSheetCode() {
+  if (typeof renderCharDetail === 'function') return Promise.resolve();
+  if (!document.querySelector('link[href^="sheet.css"]')) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'sheet.css'; document.head.appendChild(l); }
+  return new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = 'sheet.js'; sc.onload = ok; sc.onerror = () => no(new Error('Could not load the character sheet. Reload the page.')); document.body.appendChild(sc); });
+}
+/* The list of characters. A character opens as a full sheet (sheet.js). Your own character comes first. */
 async function renderParty(c) {
+  if (typeof sheetResumeStored === 'function') sheetResumeStored(); // finish saving edits left from an earlier visit
   const chars = await load('characters');
-  if (S.view && S.view.startsWith('char:')) return renderCharDetail(c, chars.find(x => x.id === S.view.slice(5)));
-  c.innerHTML = `<div class="grid">` + chars.map(ch => {
+  if (S.view && S.view.startsWith('char:')) { await ensureSheetCode(); return renderCharDetail(c, chars.find(x => x.id === S.view.slice(5))); }
+  S.sheetLive = null;
+  const mineId = S.me && S.me.characterId;
+  const sorted = [...chars].sort((a, b) => (b.id === mineId) - (a.id === mineId));
+  const mine = chars.find(x => x.id === mineId);
+  c.innerHTML = (mine ? `<div class="toolbar"><button class="btn primary" id="my-sheet" type="button">${ic('pencil')} Open my sheet (${esc(mine.name.split(' ')[0])})</button></div>` : '') +
+    `<div class="grid">` + sorted.map(ch => {
     const hp = ch.hpMax ? Math.max(0, Math.min(100, 100 * (ch.hpCurrent ?? 0) / ch.hpMax)) : null;
-    return `<div class="card char-card" data-id="${ch.id}">
+    const isMine = ch.id === mineId;
+    return `<button type="button" class="card char-card ${isMine ? 'mine' : ''}" data-id="${ch.id}" aria-label="Open ${esc(ch.name)}'s sheet">
       ${ch.portrait ? `<img class="portrait" src="${esc(ch.portrait)}" alt="">` : `<div class="portrait-ph">${esc((ch.name || '?')[0])}</div>`}
       <div style="flex:1">
-        <h3>${esc(ch.name)} ${ch.editable ? ic('pencil', 'ic-muted') : ''}</h3>
+        <h3>${esc(ch.name)} ${isMine ? '<span class="badge">You</span>' : ''}</h3>
         <div class="statline"><span>${esc(ch.race)} ${esc(ch.klass)}</span><span>Lv <b>${ch.level ?? '?'}</b></span>
           ${ch.ac != null ? `<span>AC <b>${ch.ac}</b></span>` : ''}
           ${ch.hpMax ? `<span>HP <b>${ch.hpCurrent ?? '?'}</b>/${ch.hpMax}</span>` : ''}</div>
         ${hp !== null ? `<div class="hp-bar"><div class="${hp < 30 ? 'low' : ''}" style="width:${hp}%"></div></div>` : ''}
-      </div></div>`;
+      </div></button>`;
   }).join('') + `</div>`;
-  $$('.char-card').forEach(el => el.onclick = () => { S.view = 'char:' + el.dataset.id; refresh(c); });
-}
-
-function statBox(ch, field, label, ed) {
-  const v = ch[field] ?? '';
-  return `<div class="stat-box"><label>${label}</label>
-    <input data-f="${field}" value="${v}" inputmode="numeric" ${ed ? '' : 'disabled'}>
-    ${ed ? `<div class="steppers"><button class="btn step" data-step="-1" data-f="${field}">−</button><button class="btn step" data-step="1" data-f="${field}">+</button></div>` : ''}</div>`;
-}
-async function renderCharDetail(c, ch) {
-  if (!ch) { S.view = null; return renderParty(c); }
-  const ed = ch.editable;
-  const hist = await api(`/api/characters/${ch.id}/history`);
-  c.innerHTML = `
-    <div class="toolbar"><button class="btn small ghost" id="back">← Party</button></div>
-    <div class="card">
-      <div class="row">
-        ${ch.portrait ? `<img class="portrait" src="${esc(ch.portrait)}" style="width:72px;height:72px;border-radius:50%">` : ''}
-        <div><h2 style="margin:0">${esc(ch.name)}</h2>
-        <div class="muted">${esc(ch.race)} ${esc(ch.klass)}${ch.player ? ` · played by ${esc(ch.player)}` : ''}</div></div>
-      </div>
-      <div class="stat-editor">
-        ${statBox(ch, 'level', 'Level', ed)}${statBox(ch, 'ac', 'AC', ed)}
-        ${statBox(ch, 'hpCurrent', 'HP now', ed)}${statBox(ch, 'hpMax', 'HP max', ed)}${statBox(ch, 'gold', 'Gold', ed)}
-      </div>
-      <div class="row"><label class="muted">Conditions:</label>
-        <input id="conditions" style="flex:1" value="${esc(ch.conditions || '')}" placeholder="poisoned, inspired…" ${ed ? '' : 'disabled'}></div>
-      ${ed ? '<p class="muted" style="font-size:13px">Changes save automatically and appear on everyone\'s screen.</p>' : ''}
-    </div>
-    ${isStaff(S.me) ? `<div class="card dm"><h3>DM notes <span class="badge dm">DM only</span></h3>
-      <textarea id="dmNotes" placeholder="Secrets about ${esc(ch.name)}…">${esc(ch.dmNotes || '')}</textarea>
-      <button class="btn small dm" id="save-dmnotes">Save DM notes</button></div>` : ''}
-    <details class="collapse" open><summary>Character sheet & backstory ${ed ? '<button class="btn small" id="edit-content">Edit</button>' : ''}</summary>
-      <div class="card" id="content-view">${md(ch.content)}</div></details>
-    ${hist.length ? `<details class="collapse"><summary>Edit history (${hist.length})</summary><div class="card">` +
-      hist.map(h => `<div class="hist">${new Date(h.ts).toLocaleString()} — <b>${esc(h.user)}</b> changed <b>${esc(h.field)}</b>: ${esc(JSON.stringify(h.old))} → ${esc(JSON.stringify(h.new))}</div>`).join('') + '</div></details>' : ''}
-  `;
-  $('#back').onclick = () => { S.view = null; refresh(c); };
-  const patch = async body => {
-    const updated = await api(`/api/characters/${ch.id}`, { method: 'PATCH', body });
-    Object.assign(ch, updated);
-  };
-  if (ed) {
-    $$('.stat-box input').forEach(inp => inp.onchange = () => {
-      const v = inp.value.trim() === '' ? null : Number(inp.value);
-      patch({ [inp.dataset.f]: isNaN(v) ? null : v });
-    });
-    $$('.btn.step').forEach(b => b.onclick = () => {
-      const f = b.dataset.f;
-      const cur = Number(ch[f] ?? 0) + Number(b.dataset.step);
-      patch({ [f]: cur }).then(() => { $(`.stat-box input[data-f=${f}]`).value = cur; });
-    });
-    $('#conditions').onchange = e => patch({ conditions: e.target.value });
-    $('#edit-content').onclick = e => {
-      e.preventDefault(); e.stopPropagation();
-      const view = $('#content-view');
-      view.innerHTML = `<textarea id="content-ta" style="min-height:320px">${esc(ch.content)}</textarea>
-        <div class="row"><button class="btn primary" id="save-content">Save</button><button class="btn" id="cancel-content">Cancel</button></div>`;
-      $('#save-content').onclick = async () => { await patch({ content: $('#content-ta').value }); refresh(c); };
-      $('#cancel-content').onclick = () => refresh(c);
-    };
-  }
-  if (isStaff(S.me)) $('#save-dmnotes').onclick = async () => { await patch({ dmNotes: $('#dmNotes').value }); toast('DM notes saved'); };
+  c.querySelectorAll('.char-card').forEach(el => el.onclick = () => { S.view = 'char:' + el.dataset.id; refresh(c); });
+  const my = c.querySelector('#my-sheet'); if (my) my.onclick = () => { S.view = 'char:' + mineId; refresh(c); };
 }
 
 // ---------- generic entry editor form ----------
