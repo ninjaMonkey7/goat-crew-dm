@@ -306,14 +306,17 @@ function media(path) {
    Refuses files over 15 MB; anything over maxSide px on its long side (or a heavy/odd format) is
    downscaled in a canvas and re-encoded as WebP (JPEG where the browser cannot encode WebP). */
 const MEDIA_MAX_BYTES = 15 * 1024 * 1024;
-async function shrinkImage(file, maxSide) {
-  const bmp = await createImageBitmap(file);
-  const w0 = bmp.width, h0 = bmp.height, k = Math.min(1, maxSide / Math.max(w0, h0));
+async function shrinkImage(file, maxSide, { square = false } = {}) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  // square: crop the middle (portraits), a little above centre on tall photos, where faces usually are
+  const side = Math.min(bmp.width, bmp.height);
+  const sx = square ? Math.round((bmp.width - side) / 2) : 0, sy = square ? Math.round(Math.max(0, (bmp.height - side) * 0.35)) : 0;
+  const w0 = square ? side : bmp.width, h0 = square ? side : bmp.height, k = Math.min(1, maxSide / Math.max(w0, h0));
   const ext0 = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png' }[file.type];
-  if (k === 1 && ext0 && file.size <= 3 * 1024 * 1024) { bmp.close && bmp.close(); return { blob: file, w: w0, h: h0, ext: ext0 }; }
+  if (!square && k === 1 && ext0 && file.size <= 3 * 1024 * 1024) { bmp.close && bmp.close(); return { blob: file, w: w0, h: h0, ext: ext0 }; }
   const w = Math.max(1, Math.round(w0 * k)), h = Math.max(1, Math.round(h0 * k));
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-  const cx = cv.getContext('2d'); cx.imageSmoothingQuality = 'high'; cx.drawImage(bmp, 0, 0, w, h); bmp.close && bmp.close();
+  const cx = cv.getContext('2d'); cx.imageSmoothingQuality = 'high'; cx.drawImage(bmp, sx, sy, w0, h0, 0, 0, w, h); bmp.close && bmp.close();
   const enc = (type, q) => new Promise(res => cv.toBlob(res, type, q));
   let blob = await enc('image/webp', 0.86), ext = 'webp';
   if (!blob || blob.type !== 'image/webp') { blob = await enc('image/jpeg', 0.88); ext = 'jpg'; }
@@ -324,15 +327,17 @@ async function blobToBase64(blob) {
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
   return btoa(bin);
 }
-async function uploadMedia(file, dir = 'media/battle', { maxSide = 4096, message } = {}) {
+async function uploadMedia(file, dir = 'media/battle', { maxSide = 4096, message, square = false, prefix = '' } = {}) {
   if (!file || !/^image\//.test(file.type || '')) fail(415, 'That file is not an image');
   if (file.size > MEDIA_MAX_BYTES) fail(413, `That image is ${(file.size / 1048576).toFixed(1)} MB; the limit is 15 MB`);
   await requireMe();
-  const { blob, w, h, ext } = await shrinkImage(file, maxSide);
-  const path = `${dir}/${uid()}.${ext}`;
+  let shrunk;
+  try { shrunk = await shrinkImage(file, maxSide, { square }); } catch (_) { fail(415, 'That image could not be opened. Try a JPEG or PNG.'); }
+  const { blob, w, h, ext } = shrunk;
+  const path = `${dir}/${prefix ? prefix + '-' : ''}${prefix ? uid().slice(0, 10) : uid()}.${ext}`;
   const body = { message: message || `${ME.name}: upload ${path}`, content: await blobToBase64(blob), branch: GH.branch, author: { name: ME.name, email: `${ME.id}@goat-crew.local` } };
   const r = await gh(repoPath(`contents/${encPath(path)}`), { method: 'PUT', body });
-  if (!r.ok) fail(r.status, explain(r.status, path));
+  if (!r.ok) { let msg = ''; try { msg = (await r.json()).message || ''; } catch (_) { /* ignore */ } fail(r.status, msg && ![401, 404].includes(r.status) ? msg : explain(r.status, path)); }
   advanceHead((await r.json()).commit);
   MEDIA[path] = Promise.resolve(URL.createObjectURL(blob)); // no need to download what we just sent
   return { path, w, h };

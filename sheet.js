@@ -241,10 +241,11 @@ function headHTML() {
   const max = Number(ch.hpMax) || 0, cur = Number(ch.hpCurrent ?? 0);
   const pct = max ? Math.max(0, Math.min(100, 100 * cur / max)) : null;
   return `<div class="sheet-id">
-      ${ch.portrait ? `<img class="portrait" src="${esc(ch.portrait)}" alt="">` : `<div class="portrait-ph">${esc((ch.name || '?')[0])}</div>`}
+      ${photoHTML()}
       <div class="sheet-id-t"><h2>${esc(ch.name || 'Unnamed')}</h2>
         <div class="muted">${esc([ch.race, ch.klass].filter(Boolean).join(' '))}${ch.level ? ` · level ${esc(ch.level)}` : ''}${ch.player ? ` · played by ${esc(ch.player)}` : ''}</div>
-        ${pct !== null ? `<div class="hp-bar" aria-hidden="true"><div class="${pct < 30 ? 'low' : ''}" style="width:${pct}%"></div></div>` : ''}</div></div>
+        ${pct !== null ? `<div class="hp-bar" aria-hidden="true"><div class="${pct < 30 ? 'low' : ''}" style="width:${pct}%"></div></div>` : ''}
+        ${ed ? photoActionsHTML() : ''}</div></div>
     <div class="sheet-quick">
       ${sf('c', 'ac', 'AC', { t: 'num', cls: 'q' })}
       ${sf('c', 'hpCurrent', 'HP', { t: 'num', step: true, cls: 'q q-hp' })}
@@ -278,6 +279,7 @@ async function renderCharDetail(c, ch) {
     ${isStaff(S.me) ? `<div class="card dm"><h3>DM notes <span class="badge dm">DM only</span></h3>
       ${sf('c', 'dmNotes', 'DM notes', { t: 'area', rows: 4, ph: `Secrets about ${ch.name}…`, bare: true })}</div>` : ''}
     <div id="sheet-hist"></div>
+    ${SHEET_VIEW.ed ? '<input type="file" id="photo-file" accept="image/*" hidden>' : ''}
   </div>`;
   SHEET_VIEW.root = c.querySelector('#sheet');
   S.sheetLive = sheetLiveCharacters;
@@ -367,6 +369,7 @@ function bindSheet(c, ch) {
       setElValue(inp, nv); sheetEdit(inp, nv); return;
     }
     if (b.dataset.hp) { sheetHp(b.dataset.hp); return; }
+    if (b.dataset.photo) { sheetPhoto(b.dataset.photo); return; }
     if (b.dataset.add) {
       const p = b.dataset.add, row = { id: uid().slice(0, 10) };
       applySheetOps(SHEET_VIEW.sheet, [{ op: 'add', p, v: row }]);
@@ -385,6 +388,11 @@ function bindSheet(c, ch) {
       sheetDerived('s', box.dataset.rows); return;
     }
   });
+  const pf = c.querySelector('#photo-file');
+  if (pf) pf.addEventListener('change', () => { const f = pf.files && pf.files[0]; pf.value = ''; if (f) sheetPhotoPicked(f); });
+  root.addEventListener('dragover', e => { if (e.target.closest('.photo-btn')) { e.preventDefault(); e.target.closest('.photo-btn').classList.add('drop'); } });
+  root.addEventListener('dragleave', e => { const t = e.target.closest('.photo-btn'); if (t) t.classList.remove('drop'); });
+  root.addEventListener('drop', e => { const t = e.target.closest('.photo-btn'); if (!t) return; e.preventDefault(); t.classList.remove('drop'); const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) sheetPhotoPicked(f); });
   const dn = c.querySelector('#dmg-n'); if (dn) dn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sheetHp('dmg'); } });
   const ec = c.querySelector('#edit-content');
   if (ec) ec.onclick = () => {
@@ -423,6 +431,55 @@ function sheetHp(kind) {
   if (tEl && kind === 'dmg') { setElValue(tEl, temp || null); sheetEdit(tEl, temp || null); }
   inp.value = '';
   toast(kind === 'dmg' ? `Took ${n} damage. HP ${cur}${max ? '/' + max : ''}` : `Healed ${n}. HP ${cur}${max ? '/' + max : ''}`);
+}
+
+/* ---------- photo ----------
+   Pick (or drop) an image → preview in the circle → Save uploads a square 512 px copy to media/portraits/<id>-<random>
+   and points the character at it, so the party list, tracker, battle map and TV all pick it up. */
+ICONS.camera = '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" /><circle cx="12" cy="13" r="3" />';
+function photoHTML() {
+  const ch = SHEET_VIEW.ch, d = SHEET_VIEW.photoDraft;
+  const img = d ? `<img class="portrait" src="${d.url}" alt="New photo preview">`
+    : ch.portrait ? `<img class="portrait" src="${esc(ch.portrait)}" alt="">` : `<div class="portrait-ph">${esc((ch.name || '?')[0])}</div>`;
+  if (!SHEET_VIEW.ed) return img;
+  return `<button type="button" class="photo-btn ${d ? 'has-draft' : ''}" data-photo="pick" aria-label="${ch.portrait ? 'Change' : 'Add a'} photo" data-tip="${ch.portrait ? 'Change' : 'Add a'} photo">${img}<span class="photo-cam" aria-hidden="true">${ic('camera')}</span></button>`;
+}
+function photoActionsHTML() {
+  const ch = SHEET_VIEW.ch, d = SHEET_VIEW.photoDraft;
+  if (d) return `<div class="photo-act">
+      <button type="button" class="btn small primary" data-photo="save" ${d.busy ? 'disabled' : ''}>${d.busy ? 'Saving photo…' : 'Save photo'}</button>
+      <button type="button" class="btn small" data-photo="cancel" ${d.busy ? 'disabled' : ''}>Cancel</button>
+      ${d.err ? `<span class="photo-err">${esc(d.err)}</span>` : '<span class="muted">Shown as a circle, cropped to a square.</span>'}</div>`;
+  return `<div class="photo-act">
+      <button type="button" class="btn small ghost" data-photo="pick">${ic('camera')} ${ch.portrait ? 'Change photo' : 'Add a photo'}</button>
+      ${ch.portrait ? '<button type="button" class="btn small ghost" data-photo="remove">Remove</button>' : ''}</div>`;
+}
+function repaintPhoto() { sheetDerived('c', 'portrait'); }
+function sheetPhotoPicked(f) {
+  if (!/^image\//.test(f.type || '')) { toast('That file is not an image'); return; }
+  if (f.size > 15 * 1024 * 1024) { toast('That image is over 15 MB. Pick a smaller one.'); return; }
+  const old = SHEET_VIEW.photoDraft; if (old) URL.revokeObjectURL(old.url);
+  SHEET_VIEW.photoDraft = { file: f, url: URL.createObjectURL(f) };
+  repaintPhoto();
+}
+async function sheetPhoto(action) {
+  const V = SHEET_VIEW, id = V.id, d = V.photoDraft;
+  if (action === 'pick') { const pf = V.root.querySelector('#photo-file'); if (pf) pf.click(); return; }
+  if (action === 'cancel') { if (d) URL.revokeObjectURL(d.url); V.photoDraft = null; repaintPhoto(); return; }
+  if (action === 'remove') {
+    if (!confirm('Remove this photo?')) return;
+    V.ch.portrait = ''; sheetQueueSet(id, 'c', 'portrait', ''); sheetFlush(sheetSync(id)); repaintPhoto(); return;
+  }
+  if (action === 'save' && d && !d.busy) {
+    d.busy = true; d.err = ''; repaintPhoto();
+    try {
+      const up = await uploadMedia(d.file, 'media/portraits', { maxSide: 512, square: true, prefix: id, message: `${S.me.name}: new photo for ${V.ch.name}` });
+      if (SHEET_VIEW !== V) return; // they left the sheet: the photo is uploaded but not used
+      V.ch.portrait = up.path; sheetQueueSet(id, 'c', 'portrait', up.path); sheetFlush(sheetSync(id));
+      URL.revokeObjectURL(d.url); V.photoDraft = null; repaintPhoto();
+      toast('Photo saved');
+    } catch (e) { d.busy = false; d.err = e.message || 'Could not save the photo'; if (SHEET_VIEW === V) repaintPhoto(); }
+  }
 }
 
 /* ---------- live updates from other screens ---------- */
