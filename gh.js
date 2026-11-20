@@ -32,7 +32,7 @@ const FILES = {
   quests: 'data/quests.json', notices: 'data/notices.json', arc: 'data/arc.json', prep: 'data/prep.json',
   encounter: 'data/encounter.json', rolls: 'data/rolls.json', history: 'data/history.json', notes: 'data/notes.json',
   chat: 'data/chat.json', maps: 'data/maps.json', pins: 'data/pins.json', plans: 'data/plans.json',
-  battle: 'data/battle.json'
+  battle: 'data/battle.json', relations: 'data/relations.json'
 };
 const RAW = {};        // name -> parsed JSON (live cache)
 const SHA = {};        // path -> blob sha (optimistic concurrency for writes)
@@ -41,7 +41,7 @@ let ME = null, headSha = null, headEtag = null, pollTimer = null, loaded = null;
 
 const uid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join('');
 const defaults = name => name === 'encounter' ? { round: 1, turn: 0, combatants: [] } : (name === 'notes' || name === 'plans') ? {} : name === 'pins' ? { pins: [], party: {} }
-  : name === 'battle' ? { scenes: [], display: { sceneId: null, follow: 'dm', camera: null, showInit: true } } : [];
+  : name === 'battle' ? { scenes: [], display: { sceneId: null, follow: 'dm', camera: null, showInit: true } } : name === 'relations' ? { links: [], people: {} } : [];
 
 // ---------- base64 (UTF-8 safe) ----------
 const _enc = new TextEncoder(), _dec = new TextDecoder();
@@ -105,7 +105,7 @@ async function whyFailed(r, what) {
 async function readFile(name) {
   const path = FILES[name];
   const r = await gh(repoPath(`contents/${encPath(path)}?ref=${encodeURIComponent(GH.branch)}`));
-  if (r.status === 404 && SHA[path] === undefined && headSha) { RAW[name] = defaults(name); SHA[path] = null; return RAW[name]; } // missing file: first save creates it
+  if (r.status === 404 && (SHA[path] === undefined || SHA[path] === null) && headSha) { RAW[name] = defaults(name); SHA[path] = null; return RAW[name]; } // missing file: first save creates it
   if (!r.ok) fail(r.status, await whyFailed(r, path));
   const j = await r.json();
   SHA[path] = j.sha;
@@ -371,7 +371,8 @@ const TAB_DEFS = [
   { id: 'map', label: 'World map', player: true }, { id: 'chat', label: 'DM Chat' }, { id: 'party', label: 'Party', player: true },
   { id: 'battle', label: 'Initiative', player: true }, { id: 'battlemap', label: 'Battle map', player: true }, { id: 'dice', label: 'Dice', player: true },
   { id: 'journal', label: 'Journal', player: true }, { id: 'codex', label: 'Codex', player: true }, { id: 'quests', label: 'Quests', player: true },
-  { id: 'board', label: 'Board', player: true }, { id: 'arc', label: 'Arc' }, { id: 'notes', label: 'My Notes', player: true }, { id: 'dm', label: 'Prep & tools' }
+  { id: 'board', label: 'Board', player: true }, { id: 'arc', label: 'Arc' }, { id: 'relations', label: 'Relationships' }, { id: 'notes', label: 'My Notes', player: true },
+  { id: 'dm', label: 'Prep & tools' }
 ];
 function defaultTabs(role) { const t = TAB_DEFS.filter(x => role !== 'player' || x.player).map(x => x.id); return role === 'admin' ? [...t, 'admin'] : t; }
 function charView(c, user) { const out = { ...c }; if (!isDMUser(user) && user.characterId !== c.id) delete out.dmNotes; out.editable = isDMUser(user) || user.characterId === c.id; return out; }
@@ -460,6 +461,156 @@ const COLLECTIONS = {
   arc: { view: arcView, fields: ['arc', 'kind', 'title', 'content', 'status', 'owner', 'order', 'session', 'codexId'] }
 };
 function pickAllowed(body, allowed) { const out = {}; for (const [k, v] of Object.entries(body || {})) if (allowed.includes(k) && v !== undefined) out[k] = v; return out; }
+
+/* ---------- relationships (DM only): data/relations.json ----------
+   { links: [{ id, a, b, kind, label, dir: 'both'|'ab', note, since, ended, secret, ts, by }], people: { <nodeId>: { x, y, pinned, attitude, status, where, lastSeen } } }
+   A node id is 'pc:<characterId>' or 'codex:<codexId>'. relations.js owns the kinds' names and colours; this layer only checks
+   what may be saved: known fields, sane lengths, both ends real, nobody linked to themselves. */
+const REL_KIND_IDS = ['ally', 'friend', 'family', 'romance', 'rival', 'enemy', 'serves', 'member', 'owes', 'knows'];
+const REL_ATTITUDES = ['ally', 'friendly', 'neutral', 'wary', 'hostile', 'unknown'];
+const REL_STATUSES = ['alive', 'dead', 'missing', 'unknown'];
+const REL_NODE_RE = /^(pc|codex):([\w-]{1,64})$/;
+const REL_LINK_FIELDS = ['a', 'b', 'kind', 'label', 'dir', 'note', 'since', 'ended', 'secret'];
+const REL_PERSON_FIELDS = ['x', 'y', 'pinned', 'attitude', 'status', 'where', 'lastSeen'];
+const REL_MAX_LINKS = 3000;
+// a hand-edited or half-written file still reads as { links: [], people: {} }
+function relDoc(d) {
+  const o = d && typeof d === 'object' && !Array.isArray(d) ? d : {};
+  return { ...o, links: Array.isArray(o.links) ? o.links.filter(l => l && typeof l === 'object') : [], people: o.people && typeof o.people === 'object' && !Array.isArray(o.people) ? o.people : {} };
+}
+function relNode(id) {
+  const m = REL_NODE_RE.exec(String(id || '')); if (!m) return null;
+  return m[1] === 'pc' ? (RAW.characters || []).find(c => c.id === m[2]) || null : (RAW.codex || []).find(e => e.id === m[2]) || null;
+}
+const relName = id => { const n = relNode(id); return n ? n.name : String(id || '?'); };
+const relObj = (v, what) => (v && typeof v === 'object' && !Array.isArray(v) ? v : fail(400, `${what} must be an object`));
+function relText(v, max, what) {
+  if (v === null) return '';
+  if (typeof v !== 'string') fail(400, `${what} must be text`);
+  const s = v.trim().replace(/[\u0000-\u0008\u000b-\u001f]/g, '');
+  if (s.length > max) fail(400, `${what} is too long (${max} characters at most)`);
+  return s;
+}
+/* A new link (cur = null) or the patched copy of cur. allowId: Undo puts a deleted link back under its own id. */
+function relLink(body, cur, allowId = false) {
+  const src = relObj(body, 'A relationship');
+  for (const k of Object.keys(src)) if (!REL_LINK_FIELDS.includes(k) && !(allowId && k === 'id')) fail(400, `Unknown field "${k}"`);
+  const l = cur ? { ...cur } : { id: uid(), a: '', b: '', kind: '', label: '', dir: 'both', note: '', since: '', ended: false, secret: false };
+  if (allowId && src.id !== undefined) { if (typeof src.id !== 'string' || !/^[0-9a-f]{16}$/.test(src.id)) fail(400, 'Bad relationship id'); l.id = src.id; }
+  for (const k of ['a', 'b']) if (src[k] !== undefined) { if (!relNode(src[k])) fail(400, `${k === 'a' ? 'The first' : 'The second'} person isn't in the party or the Codex (any more)`); l[k] = src[k]; }
+  if (src.kind !== undefined) { if (!REL_KIND_IDS.includes(src.kind)) fail(400, 'Unknown kind of relationship'); l.kind = src.kind; }
+  if (src.dir !== undefined) { if (src.dir !== 'both' && src.dir !== 'ab') fail(400, 'Direction must be "both" or "ab"'); l.dir = src.dir; }
+  if (src.label !== undefined) l.label = relText(src.label, 60, 'The label');
+  if (src.since !== undefined) l.since = relText(src.since, 40, '"Since"');
+  if (src.note !== undefined) l.note = relText(src.note, 4000, 'The note');
+  for (const k of ['ended', 'secret']) if (src[k] !== undefined) { if (typeof src[k] !== 'boolean') fail(400, `"${k}" must be true or false`); l[k] = src[k]; }
+  if (!l.a || !l.b) fail(400, 'A relationship needs two people');
+  if (!l.kind) fail(400, 'Pick a kind of relationship');
+  if (l.a === l.b) fail(400, 'Someone can\'t have a relationship with themselves');
+  return l;
+}
+const relSame = (x, y) => x.id !== y.id && x.kind === y.kind && ((x.a === y.a && x.b === y.b) || (x.a === y.b && x.b === y.a)) && String(x.label || '').toLowerCase() === String(y.label || '').toLowerCase();
+function relAddTo(doc, l) {
+  if (doc.links.some(x => x.id === l.id)) fail(409, 'That relationship is already there');
+  if (doc.links.some(x => relSame(x, l))) fail(409, 'They already have that relationship');
+  if (doc.links.length >= REL_MAX_LINKS) fail(400, `That's the limit of ${REL_MAX_LINKS} relationships`);
+  doc.links.push(l);
+}
+/* Person meta: null or '' clears a field. Positions are rounded to a tenth of a pixel. */
+function relPerson(body, fields = REL_PERSON_FIELDS) {
+  const src = relObj(body, 'Person details'), out = {};
+  for (const [k, v] of Object.entries(src)) {
+    if (!fields.includes(k)) fail(400, `Unknown field "${k}"`);
+    if (v === null || v === '') { out[k] = null; continue; }
+    if (k === 'x' || k === 'y') { if (typeof v !== 'number' || !Number.isFinite(v) || Math.abs(v) > 1e6) fail(400, 'Bad position'); out[k] = Math.round(v * 10) / 10; }
+    else if (k === 'pinned') { if (typeof v !== 'boolean') fail(400, '"pinned" must be true or false'); out[k] = v || null; }
+    else if (k === 'attitude') { if (!REL_ATTITUDES.includes(v)) fail(400, 'Unknown attitude'); out[k] = v; }
+    else if (k === 'status') { if (!REL_STATUSES.includes(v)) fail(400, 'Unknown status'); out[k] = v; }
+    else if (k === 'where') out[k] = relText(v, 80, 'The location') || null;
+    else out[k] = relText(v, 40, '"Last seen"') || null;
+  }
+  return out;
+}
+function relSetPerson(people, id, patch) {
+  const p = { ...(people[id] || {}) };
+  for (const [k, v] of Object.entries(patch)) { if (v === null) delete p[k]; else p[k] = v; }
+  if (Object.keys(p).length) people[id] = p; else delete people[id];
+}
+const relLine = l => `${relName(l.a)} — ${l.kind}${l.label ? ` (${l.label})` : ''} — ${relName(l.b)}`;
+
+async function relationsRoute(sub, method, body, user) {
+  const who = user.name;
+  const stamp = l => ({ ...l, ts: new Date().toISOString(), by: who });
+  let m;
+  if (sub === '' && method === 'GET') return structuredClone(relDoc(RAW.relations));
+  // add one relationship (with an id from Undo, it comes back as it was)
+  if (sub === '/links' && method === 'POST') {
+    const l = stamp(relLink(body, null, true));
+    await save('relations', d => { d = relDoc(d); relAddTo(d, l); return d; }, `${who}: relationship — ${relLine(l)}`);
+    logHistory(user, 'relations', l.id, '(created)', '', relLine(l));
+    return structuredClone(l);
+  }
+  if ((m = sub.match(/^\/links\/([\w-]{1,40})$/))) {
+    const id = m[1], cur = relDoc(RAW.relations).links.find(x => x.id === id);
+    if (!cur) fail(404, 'That relationship was deleted on another screen');
+    if (method === 'PATCH') {
+      relLink(body, cur); // checks before anything is sent
+      let out = null;
+      await save('relations', d => {
+        d = relDoc(d);
+        const i = d.links.findIndex(x => x.id === id); if (i < 0) fail(404, 'That relationship was deleted on another screen');
+        const next = relLink(body, d.links[i]);
+        if (d.links.some(x => relSame(x, next))) fail(409, 'They already have that relationship');
+        d.links[i] = out = { ...next, ts: new Date().toISOString(), by: who };
+        return d;
+      }, `${who}: relationship — ${relLine(relLink(body, cur))}`);
+      return structuredClone(out);
+    }
+    if (method === 'DELETE') {
+      await save('relations', d => { d = relDoc(d); d.links = d.links.filter(x => x.id !== id); return d; }, `${who}: remove relationship — ${relLine(cur)}`);
+      logHistory(user, 'relations', id, '(deleted)', relLine(cur), '');
+      return { ok: true, link: structuredClone(cur) };
+    }
+  }
+  // one person's details: attitude, status, last known location, last seen, position (node ids carry a colon)
+  if ((m = sub.match(/^\/people\/([^/]+)$/)) && method === 'PATCH') {
+    const id = decodeURIComponent(m[1]);
+    if (!relNode(id)) fail(404, 'That person no longer exists');
+    const patch = relPerson(body);
+    if (!Object.keys(patch).length) return { id, ...(relDoc(RAW.relations).people[id] || {}) };
+    await save('relations', d => { d = relDoc(d); relSetPerson(d.people, id, patch); return d; }, `${who}: ${relName(id)} — ${Object.keys(patch).join(', ')}`);
+    return { id, ...(relDoc(RAW.relations).people[id] || {}) };
+  }
+  // where people sit on the web: a burst of drags, one commit. Someone deleted meanwhile is skipped.
+  if (sub === '/layout' && method === 'PUT') {
+    const pos = relObj(relObj(body, 'The layout').positions, 'positions'), ids = Object.keys(pos).filter(id => relNode(id)).slice(0, 1000);
+    const patches = ids.map(id => [id, relPerson(pos[id], ['x', 'y', 'pinned'])]);
+    if (patches.length) await save('relations', d => { d = relDoc(d); for (const [id, p] of patches) relSetPerson(d.people, id, p); return d; }, `${who}: relationship web layout (${patches.length})`);
+    return { ok: true, saved: patches.length };
+  }
+  // several changes in one commit: { people: { id: patch }, add: [link], del: [linkId] } (quick add, clean-up)
+  if (sub === '/apply' && method === 'POST') {
+    const src = relObj(body, 'The change');
+    for (const k of Object.keys(src)) if (!['people', 'add', 'del'].includes(k)) fail(400, `Unknown field "${k}"`);
+    const people = Object.entries(src.people ? relObj(src.people, 'people') : {}).map(([id, p]) => { if (!relNode(id)) fail(404, 'That person no longer exists'); return [id, relPerson(p)]; });
+    const add = (src.add === undefined ? [] : Array.isArray(src.add) ? src.add : fail(400, '"add" must be a list')).slice(0, 50).map(x => stamp(relLink(x, null, true)));
+    const del = new Set(src.del === undefined ? [] : Array.isArray(src.del) ? src.del.filter(x => typeof x === 'string') : fail(400, '"del" must be a list'));
+    const removed = relDoc(RAW.relations).links.filter(x => del.has(x.id));
+    if (!people.length && !add.length && !del.size) return { ok: true, added: [], removed: [] };
+    const what = [add.length && `${add.length} new`, removed.length && `${removed.length} removed`, people.length && people.map(([id]) => relName(id)).join(', ')].filter(Boolean).join(' · ');
+    await save('relations', d => {
+      d = relDoc(d);
+      for (const [id, p] of people) relSetPerson(d.people, id, p);
+      d.links = d.links.filter(x => !del.has(x.id));
+      for (const l of add) relAddTo(d, l);
+      return d;
+    }, `${who}: relationships — ${what}`);
+    for (const l of add) logHistory(user, 'relations', l.id, '(created)', '', relLine(l));
+    for (const l of removed) logHistory(user, 'relations', l.id, '(deleted)', relLine(l), '');
+    return { ok: true, added: structuredClone(add), removed: structuredClone(removed) };
+  }
+  fail(404, 'Unknown endpoint /api/relations' + sub);
+}
 
 // ---------- history log: batched into one commit every few seconds ----------
 let pendingHistory = [], historyTimer = null;
@@ -723,6 +874,12 @@ async function route(path, method, body) {
     const msg = { id: uid(), ts: new Date().toISOString(), user: body.user || who, kind: body.kind || 'dm', text: String(body.text || '').slice(0, 12000), askedBy: body.askedBy };
     await save('chat', arr => [...arr, msg].slice(-400), `${msg.user}: chat`);
     return msg;
+  }
+
+  // --- relationships: the DMs' web of who is tied to whom (the login server never lets a player read or write the file) ---
+  if (path === '/api/relations' || path.startsWith('/api/relations/')) {
+    if (!isDM) fail(403, 'Only the DMs can see that.');
+    return relationsRoute(path.slice('/api/relations'.length), method, body, user);
   }
 
   // --- DM only from here ---

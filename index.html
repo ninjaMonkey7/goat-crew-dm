@@ -49,6 +49,7 @@
 <link rel="stylesheet" href="battlemap.css">
 <link rel="stylesheet" href="admin.css">
 <link rel="stylesheet" href="sheet.css">
+<link rel="stylesheet" href="relations.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐐</text></svg>">
 </head>
 <body>
@@ -173,6 +174,7 @@
           <div class="nav-label" id="ng-dm"><span>DM only</span><span class="nav-hint" data-tip="Hidden from players"><span class="ic-slot" data-ic="eyeoff"></span><span class="sr-only">, hidden from players</span></span></div>
           <button data-tab="chat" class="tab">DM Chat</button>
           <button data-tab="arc" class="tab dm-only hidden">Arc</button>
+          <button data-tab="relations" class="tab dm-only hidden">Relationships</button>
           <button data-tab="dm" class="tab dm-only hidden" title="Encounter builder, session prep, users and the activity log">Prep &amp; tools</button>
         </div>
         <div class="nav-group" data-group="admin" role="group" aria-labelledby="ng-admin">
@@ -202,5 +204,7 @@
 <script src="admin.js"></script>
 <script src="app.js"></script>
 <script src="sheet.js"></script>
+<script src="relations-graph.js"></script>
+<script src="relations.js"></script>
 </body>
 </html>

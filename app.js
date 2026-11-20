@@ -238,6 +238,7 @@ function paintNavToggle() {
   b.setAttribute('aria-expanded', String(navNarrow() ? open : !rail));
 }
 function navSetRail(on) {
+  if (navAuto) { navAuto = false; if (S.tab === 'relations') navKeepFull = !on; } // the DM chose: keep that for this visit
   document.body.classList.toggle('nav-rail', on);
   try { localStorage.setItem('gc_nav', on ? 'rail' : 'full'); } catch (_) { /* private mode */ }
   paintNavToggle();
@@ -249,9 +250,18 @@ function navDrawer(open) {
   if (open) { const a = $('#tabs .tab.active') || $('#tabs .tab:not(.hidden)'); if (a) setTimeout(() => a.focus({ preventScroll: true }), 30); }
 }
 try { document.body.classList.toggle('nav-rail', localStorage.getItem('gc_nav') === 'rail'); } catch (_) { /* default: full */ }
+/* Relationships is canvas-first: there the sidebar folds to its icon rail by itself, and opens again on the way out. The saved
+   preference (gc_nav) is never touched; if the DM opens it on that page, it stays open until they leave. */
+let navAuto = false, navKeepFull = false;
+function navForRoute() {
+  if (S.tab !== 'relations') navKeepFull = false;
+  const want = S.tab === 'relations' && !navKeepFull && !navNarrow();
+  if (want && !document.body.classList.contains('nav-rail')) { document.body.classList.add('nav-rail'); navAuto = true; paintNavToggle(); }
+  else if (!want && navAuto) { document.body.classList.remove('nav-rail'); navAuto = false; paintNavToggle(); }
+}
 $('#nav-toggle').onclick = () => (navNarrow() ? navDrawer(!document.body.classList.contains('nav-open')) : navSetRail(!document.body.classList.contains('nav-rail')));
 $('#nav-scrim').onclick = () => navDrawer(false);
-NAV_MQ.addEventListener('change', () => { navDrawer(false); });
+NAV_MQ.addEventListener('change', () => { navDrawer(false); if (typeof navForRoute === 'function') navForRoute(); });
 paintNavToggle();
 
 /* Menus in the top bar (account, pin a panel): a button + a [role=menu] beside it. Arrow keys move, Esc closes. */
@@ -296,7 +306,7 @@ bindMenu($('#pin-btn'), $('#pin-menu'), menu => {
   menu.querySelectorAll('[data-pin]').forEach(b => b.onclick = () => { pick.value = b.dataset.pin; pick.dispatchEvent(new Event('change')); });
 });
 /* Settings and Admin are about this browser and these people, not the game: no pinned panel there (it comes back on the next page) */
-const PIN_OFF = new Set(['settings', 'admin']);
+const PIN_OFF = new Set(['settings', 'admin', 'relations']); // Relationships has its own panel and needs the width
 const pinOffered = () => $$('#pin-pick option').some(o => o.value && !o.hidden);
 function paintPin() {
   const btn = $('#pin-btn'), on = !!(S.pin && RAIL_TABS[S.pin]);
@@ -389,6 +399,8 @@ function showMain() {
   connectSSE();
   render();
 }
+// a cached older index.html has no Relationships button: add it after Arc
+if (!$('#tabs .tab[data-tab="relations"]') && $('#tabs .tab[data-tab="arc"]')) $('#tabs .tab[data-tab="arc"]').insertAdjacentHTML('afterend', '<button data-tab="relations" class="tab dm-only hidden">Relationships</button>');
 $$('#tabs .tab').forEach(b => b.onclick = () => {
   S.tab = b.dataset.tab; S.view = null; S.formOpen = false;
   localStorage.setItem('gc_tab', S.tab);
@@ -396,22 +408,26 @@ $$('#tabs .tab').forEach(b => b.onclick = () => {
   render();
 });
 $('#pin-pick').onchange = e => setPin(e.target.value);
-const TAB_ICONS = { map: 'map', chat: 'chat', party: 'users', battle: 'swords', battlemap: 'grid', dice: 'dice', journal: 'book', codex: 'scroll', quests: 'flag', board: 'pin', arc: 'route', notes: 'notebook', dm: 'crown', admin: 'shield', settings: 'settings' };
+const TAB_ICONS = { map: 'map', chat: 'chat', party: 'users', battle: 'swords', battlemap: 'grid', dice: 'dice', journal: 'book', codex: 'scroll', quests: 'flag', board: 'pin', arc: 'route', relations: 'waypoints', notes: 'notebook', dm: 'crown', admin: 'shield', settings: 'settings' };
 $$('#tabs .tab').forEach(b => { const n = TAB_ICONS[b.dataset.tab], label = b.textContent.trim(); if (n) b.innerHTML = ic(n) + `<span>${esc(label)}</span>`; b.dataset.tip = label; });
 // the sidebar names the pages; the access lists (gh.js TAB_DEFS, shown on People & access) use the same names
 if (typeof TAB_DEFS !== 'undefined') TAB_DEFS.forEach(d => { const b = $(`#tabs .tab[data-tab="${d.id}"]`); if (b) d.label = b.textContent.trim(); });
-// Keyboard: N = next turn when Initiative is showing, / = jump to the DM chat box, [ = collapse / expand the sidebar,
-// Esc = close the menu drawer or the map side panel, or leave a field
+// Keyboard: N = next turn when Initiative is showing (on Relationships: add a person), / = jump to the DM chat box (on Relationships: its search), [ = collapse /
+// expand the sidebar, Esc = close the menu drawer, the map side panel or the Relationships panel, or leave a field
 document.addEventListener('keydown', e => {
   const tag = (e.target && e.target.tagName || '').toUpperCase();
   const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (e.target && e.target.isContentEditable);
   if (e.key === 'Escape') {
     if (document.body.classList.contains('nav-open')) { navDrawer(false); $('#nav-toggle').focus(); return; }
+    if (S.tab === 'relations' && typeof relEscape === 'function' && relEscape(e)) return;
     const side = $('#map-side'); if (side && !side.classList.contains('hidden') && typeof closeSide === 'function') closeSide(); if (typing) e.target.blur(); return;
   }
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === 'n' || e.key === 'N') { const b = $('#b-next'); if (b) { e.preventDefault(); b.click(); } }
-  else if (e.key === '/') { e.preventDefault(); const t = $('#chat-text'); if (t) t.focus(); else { S.tab = 'chat'; localStorage.setItem('gc_tab', 'chat'); render().then(() => { const x = $('#chat-text'); if (x) x.focus(); }); } }
+  if (e.key === 'n' || e.key === 'N') {
+    if (S.tab === 'relations' && typeof relNewPerson === 'function') { e.preventDefault(); relNewPerson(); return; } // N = new person there
+    const b = $('#b-next'); if (b) { e.preventDefault(); b.click(); }
+  }
+  else if (e.key === '/') { e.preventDefault(); if (S.tab === 'relations' && typeof relFocusSearch === 'function' && relFocusSearch()) return; const t = $('#chat-text'); if (t) t.focus(); else { S.tab = 'chat'; localStorage.setItem('gc_tab', 'chat'); render().then(() => { const x = $('#chat-text'); if (x) x.focus(); }); } }
   else if (e.key === '[' && !navNarrow() && !$('#main').classList.contains('hidden')) { e.preventDefault(); navSetRail(!document.body.classList.contains('nav-rail')); }
 });
 
@@ -439,6 +455,7 @@ async function renderInto(c, tab) {
     else if (tab === 'board') await renderBoard(c);
     else if (tab === 'notes') await renderNotes(c);
     else if (tab === 'arc') await renderArc(c);
+    else if (tab === 'relations') { await ensureRelCode(); await renderRelations(c); }
     else if (tab === 'dm') await renderDM(c);
     else if (tab === 'map') await renderMap(c);
     else if (tab === 'chat') await renderChat(c);
@@ -475,6 +492,8 @@ async function renderOnce() {
   document.title = `${label} · Goat Crew`;
   document.body.classList.toggle('tab-map', S.tab === 'map');
   document.body.classList.toggle('tab-battlemap', S.tab === 'battlemap');
+  document.body.classList.toggle('tab-relations', S.tab === 'relations'); // full-bleed, like the World map
+  navForRoute();
   await syncRail(); // if the main tab is the pinned one, empty the rail first so element ids stay unique
   await renderInto($('#content'), S.tab);
   await syncRail();
@@ -508,6 +527,15 @@ function ensureSheetCode() {
   if (typeof renderCharDetail === 'function') return Promise.resolve();
   if (!document.querySelector('link[href^="sheet.css"]')) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'sheet.css'; document.head.appendChild(l); }
   return new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = 'sheet.js'; sc.onload = ok; sc.onerror = () => no(new Error('Could not load the character sheet. Reload the page.')); document.body.appendChild(sc); });
+}
+/* Relationships: relations-graph.js (the web) and relations.js (the page), same story as the sheet. Without the web the page
+   still works, as a list. */
+function ensureRelCode() {
+  if (typeof renderRelations === 'function') return Promise.resolve();
+  if (!document.querySelector('link[href^="relations.css"]')) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'relations.css'; document.head.appendChild(l); }
+  const add = src => new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = src; sc.onload = ok; sc.onerror = no; document.body.appendChild(sc); });
+  return (typeof RelGraph === 'undefined' ? add('relations-graph.js').catch(() => {}) : Promise.resolve())
+    .then(() => add('relations.js')).catch(() => { throw new Error('Could not load the Relationships page. Reload the page.'); });
 }
 /* The list of characters. A character opens as a full sheet (sheet.js). Your own character comes first. */
 async function renderParty(c) {
@@ -1846,4 +1874,6 @@ async function renderDM(c) {
   $('#prep-add').onclick = async () => { await api('/api/prep', { method: 'POST', body: { title: 'New prep page', content: '' } }); render(); };
 }
 
-boot();
+// Start once every script in index.html has run (sheet.js, relations.js load after this file): a fast sign-in could
+// otherwise render a page before its code arrives, and the on-demand loader would then load that file a second time.
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();
