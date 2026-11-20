@@ -50,6 +50,8 @@ const RL_LINK_KEYS = ['a', 'b', 'kind', 'label', 'dir', 'note', 'since', 'ended'
 const RL_FACTION_HUES = ['#60A5FA', '#22D3EE', '#E879F9', '#A78BFA', '#94A3B8', '#818CF8']; // until the web says which is whose
 const RL_MAX_TIES = 8;                                                // a profile shows this many, then "Show n more"
 const RL_PHONE = matchMedia('(max-width: 639px)');
+// phones and tablets (any width, either way up) and short windows: the legend always starts folded, whatever was saved
+const RL_FOLD_LEGEND = matchMedia('(pointer: coarse), (max-height: 520px)');
 const RL_TITLES = new Set(['the', 'a', 'an', 'of', 'captain', 'sergeant', 'lady', 'lord', 'sir', 'dame', 'brother', 'sister', 'old', 'mayor', 'baron',
   'baroness', 'king', 'queen', 'prince', 'princess', 'duke', 'duchess', 'master', 'mistress', 'doctor', 'dr', 'saint', 'st', 'father', 'mother']);
 // icons the shared set doesn't have (Lucide, ISC)
@@ -86,7 +88,7 @@ const RLS = {
     const p = JSON.parse(localStorage.getItem('gc_rel') || '{}');
     if (Array.isArray(p.types) && p.types.length) RLS.types = new Set(p.types.filter(t => RL_TYPE_LABEL[t]));
     if (!RLS.types.size) RLS.types = new Set(['pc', 'npc', 'faction']);
-    RLS.showEnded = !!p.showEnded; RLS.layout = p.layout === 'party' ? 'party' : 'web'; RLS.legend = p.legend === true;
+    RLS.showEnded = !!p.showEnded; RLS.layout = p.layout === 'party' ? 'party' : 'web'; RLS.legend = p.legend === true && !RL_FOLD_LEGEND.matches;
     RLS.phoneMode = p.phoneMode === 'web' ? 'web' : 'list';
   } catch (_) { RLS.phoneMode = 'list'; }
 })();
