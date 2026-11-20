@@ -1087,6 +1087,8 @@ ${attRules()}
       const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
       return { k, x: (s.l + s.r) / 2 - cx * k, y: (s.t + s.b) / 2 - 9 - cy * k };
     }
+    // frame a selected tie: both ends, with room for their names and the tie's label between them
+    function linkCam(l) { return frameFor([l.a, l.b], 96, compact ? 1.4 : 1.6); }
     function focusCam(n) {
       if (egoMode) {   // phone: the ring at true size (130px), shrunk only if the safe area can't hold it
         const s = visibleSafe(), k = clamp(Math.min(1, ((s.r - s.l) / 2 - 22) / (egoRx + 22), ((s.b - s.t) / 2 - 14) / (egoRy + 22)), .4, 1);
@@ -1766,7 +1768,13 @@ ${attRules()}
         selLinkId = id && links.has(id) ? id : null; selId = null;
         computeDisp(true); applyClasses();
         const l = selLinkId && links.get(selLinkId);
-        if (l && !(onScreen(l.a, 40) && onScreen(l.b, 40))) { autoFit = false; setCam(frameFor([l.a, l.b], 96, 1.6), true, 450); }
+        if (l) {
+          // Like a person: leave fit-everything mode and remember the view. Otherwise a panel or phone sheet opening over
+          // the canvas re-fits the whole web into what's left, and on a phone the tie's two ends end up on top of each other.
+          if (!camBefore) camBefore = { x: cam.x, y: cam.y, k: cam.k, auto: autoFit };
+          autoFit = false;
+          if (compact || !(onScreen(l.a, 40) && onScreen(l.b, 40))) setCam(linkCam(l), true, 450);
+        } else if (camBefore) { const c = camBefore; camBefore = null; autoFit = c.auto; setCam(c.auto ? fitFor(live()) : c, true, 300); }
       },
       highlightLink(id) {
         id = id == null ? null : String(id);
@@ -1789,9 +1797,10 @@ ${attRules()}
           if (v !== ins[k]) { ins[k] = v; changed = true; }
         }
         if (!changed || !W) { forceLabels = true; kick(); return; }
-        const anim = animate !== false, n = selId && nodes.get(selId);
+        const anim = animate !== false, n = selId && nodes.get(selId), l = !n && selLinkId && links.get(selLinkId);
         if (autoFit) setCam(fitFor(live()), anim, 300);
         else if (n) { if (egoMode) computeDisp(anim); setCam(focusCam(n), anim, 300); }
+        else if (l && (compact || !(onScreen(l.a, 40) && onScreen(l.b, 40)))) setCam(linkCam(l), anim, 300);   // keep the selected tie framed
         else { const t = nudgeCam(); if (t) setCam(t, anim, 300); }
         forceLabels = true; kick();
       },
