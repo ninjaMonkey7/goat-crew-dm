@@ -8,6 +8,8 @@ const MS = { mapId: null, map: null, pinLayer: null, party: null, svg: null, mod
 const PIN_ICONS = ['📍', '🏰', '🍺', '⚓', '🚪', '🐟', '🏥', '⚔️', '💀', '❓', '⭐', '🏚', '⛪', '🌲', '💰', '🕯'];
 const toLL = (map, x, y) => [map.height - y, x];
 const fromLL = (map, ll) => ({ x: Math.round(ll.lng), y: Math.round(map.height - ll.lat) });
+/* Only DMs change the map (pins, party marker, rooms); the login server refuses the rest. Players look and read. */
+const mapEditable = () => isStaff(S.me);
 
 async function renderMap(c) {
   const [maps, pins, plans] = await Promise.all([load('maps'), load('pins'), load('plans')]);
@@ -20,7 +22,8 @@ async function renderMap(c) {
     <div class="map-wrap">
       <div class="map-bar">
         <select id="map-pick">${maps.map(m => `<option value="${m.id}" ${m.id === mapId ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>
-        ${map.type === 'image' ? `<button class="btn small" id="pin-add">${ic('mappin')} Add pin</button><button class="btn small" id="party-set">🐐 Party here</button>` : `<span class="muted" style="font-size:13px">Tap a room: notes, explored, party position</span>`}
+        ${!mapEditable() ? `<span class="muted" style="font-size:13px">${map.type === 'image' ? 'Tap a pin to see what is there' : 'Tap a room to read about it'}</span>`
+          : map.type === 'image' ? `<button class="btn small" id="pin-add">${ic('mappin')} Add pin</button><button class="btn small" id="party-set">🐐 Party here</button>` : `<span class="muted" style="font-size:13px">Tap a room: notes, explored, party position</span>`}
         <button class="btn small ghost" id="map-fit" title="Fit to screen">${ic('maximize')} Fit</button>
         <span class="muted" style="font-size:12px;margin-left:auto">scroll / pinch to zoom · drag to pan</span>
       </div>
@@ -51,10 +54,12 @@ async function mountImageMap(map, pins) {
   MS.pinLayer = L.layerGroup().addTo(m);
   drawPins(pins);
 
-  $('#pin-add').onclick = () => setMode(MS.mode === 'pin' ? null : 'pin');
-  $('#party-set').onclick = () => setMode(MS.mode === 'party' ? null : 'party');
+  const pa = $('#pin-add'), ps = $('#party-set');
+  if (pa) pa.onclick = () => setMode(MS.mode === 'pin' ? null : 'pin');
+  if (ps) ps.onclick = () => setMode(MS.mode === 'party' ? null : 'party');
   m.on('click', async e => {
-    if (MS.mode === 'pin') { setMode(null); openPinForm(fromLL(map, e.latlng)); }
+    if (!mapEditable()) closeSide();
+    else if (MS.mode === 'pin') { setMode(null); openPinForm(fromLL(map, e.latlng)); }
     else if (MS.mode === 'party') { setMode(null); const p = fromLL(map, e.latlng); await api('/api/pins', { method: 'POST', body: { op: 'party', mapId: map.id, x: p.x, y: p.y } }); drawPins(await load('pins')); toast('🐐 Party moved'); }
     else closeSide();
   });
@@ -74,16 +79,17 @@ function drawPins(pins) {
   if (!MS.pinLayer || !MS.map) return;
   const map = MS.map;
   MS.pinLayer.clearLayers();
+  const ed = mapEditable();
   for (const pin of (pins.pins || []).filter(p => p.mapId === map.id)) {
-    const mk = L.marker(toLL(map, pin.x, pin.y), { draggable: true, icon: L.divIcon({ className: 'pin', html: `<span class="pin-ico">${pin.icon || '📍'}</span><span class="pin-lbl">${esc(pin.label || '')}</span>`, iconAnchor: [11, 11] }) });
+    const mk = L.marker(toLL(map, pin.x, pin.y), { draggable: ed, icon: L.divIcon({ className: 'pin', html: `<span class="pin-ico">${pin.icon || '📍'}</span><span class="pin-lbl">${esc(pin.label || '')}</span>`, iconAnchor: [11, 11] }) });
     mk.on('click', () => openPinForm(pin, pin));
-    mk.on('dragend', async () => { const p = fromLL(map, mk.getLatLng()); await api('/api/pins', { method: 'POST', body: { op: 'update', id: pin.id, fields: { x: p.x, y: p.y } } }); });
+    if (ed) mk.on('dragend', async () => { const p = fromLL(map, mk.getLatLng()); await api('/api/pins', { method: 'POST', body: { op: 'update', id: pin.id, fields: { x: p.x, y: p.y } } }); });
     mk.addTo(MS.pinLayer);
   }
   const pp = (pins.party || {})[map.id];
   if (pp) {
-    const mk = L.marker(toLL(map, pp.x, pp.y), { draggable: true, zIndexOffset: 1000, icon: L.divIcon({ className: 'party-marker', html: '🐐', iconAnchor: [17, 17] }), title: 'The party' });
-    mk.on('dragend', async () => { const p = fromLL(map, mk.getLatLng()); await api('/api/pins', { method: 'POST', body: { op: 'party', mapId: map.id, x: p.x, y: p.y } }); });
+    const mk = L.marker(toLL(map, pp.x, pp.y), { draggable: ed, zIndexOffset: 1000, icon: L.divIcon({ className: 'party-marker', html: '🐐', iconAnchor: [17, 17] }), title: 'The party' });
+    if (ed) mk.on('dragend', async () => { const p = fromLL(map, mk.getLatLng()); await api('/api/pins', { method: 'POST', body: { op: 'party', mapId: map.id, x: p.x, y: p.y } }); });
     mk.addTo(MS.pinLayer);
   }
 }
@@ -93,6 +99,15 @@ async function openPinForm(pos, pin = null) {
   const v = pin || { label: '', icon: '📍', codexId: '' };
   const linked = codex.find(e => e.id === v.codexId);
   side.classList.remove('hidden');
+  if (!mapEditable()) { // players: what is here, and the Codex entry if they have found it
+    if (!pin) { closeSide(); return; }
+    side.innerHTML = `<div class="row spread"><h3><span aria-hidden="true">${esc(v.icon || '📍')}</span> ${esc(v.label || 'Pin')}</h3><button class="btn small ghost" id="side-close" aria-label="Close">${ic('x')}</button></div>
+      ${linked ? `<div class="card" style="margin:8px 0 0;padding:8px 10px;font-size:14px">${md((linked.playerContent || '').slice(0, 600)) || '<p class="muted">No details yet.</p>'}</div>
+        <div class="row" style="margin-top:10px"><button class="btn small" id="pin-open">Open in Codex</button></div>` : '<p class="muted" style="font-size:14px">No details yet.</p>'}`;
+    $('#side-close').onclick = closeSide;
+    if (linked) $('#pin-open').onclick = () => { S.tab = 'codex'; S.search.codex = linked.name; S.search.codexCat = 'all'; localStorage.setItem('gc_tab', 'codex'); render(); };
+    return;
+  }
   side.innerHTML = `<div class="row spread"><h3>${ic('mappin')} ${pin ? 'Pin' : 'New pin'}</h3><button class="btn small ghost" id="side-close" aria-label="Close">${ic('x')}</button></div>
     <label>Label</label><input id="pin-label" value="${esc(v.label)}" placeholder="What is here?">
     <label>Icon</label><select id="pin-icon">${PIN_ICONS.map(i => `<option ${i === v.icon ? 'selected' : ''}>${i}</option>`).join('')}</select>
@@ -208,6 +223,13 @@ async function openRoom(planId, roomId) {
   MS.svg.querySelector(`[data-room="${roomId}"]`).classList.add('selected');
   const side = $('#map-side');
   side.classList.remove('hidden');
+  if (!mapEditable()) { // players: the room's name and description; the DM's notes never reach them
+    side.innerHTML = `<div class="row spread"><h3>${plan.party === r.id ? '🐐 ' : ''}${esc(r.name)}</h3><button class="btn small ghost" id="side-close" aria-label="Close">${ic('x')}</button></div>
+      ${plan.party === r.id ? '<p class="muted" style="margin:2px 0 6px">The party is here.</p>' : ''}
+      ${r.desc ? md(r.desc) : '<p class="muted" style="font-size:14px">Nothing written about this room yet.</p>'}`;
+    $('#side-close').onclick = closeSide;
+    return;
+  }
   side.innerHTML = `<div class="row spread"><h3>${plan.party === r.id ? '🐐 ' : ''}<span id="room-title">${esc(r.name)}</span></h3><button class="btn small ghost" id="side-close" aria-label="Close">${ic('x')}</button></div>
     <div class="row" style="margin-top:4px">
       <button class="btn small ${plan.party === r.id ? 'on' : 'primary'}" id="room-party">${plan.party === r.id ? '🐐 Party is here' : '🐐 Party moves here'}</button>

@@ -84,17 +84,29 @@ const refPath = () => repoPath(`git/ref/heads/${encodeURIComponent(GH.branch)}`)
 function explain(status, what) {
   if (status === 401 && workerMode()) return 'Your session has expired. Log out and log in again with your passcode.';
   if (status === 401) return 'GitHub rejected the token. Paste a fine-grained token with Contents: read & write on the data repo.';
-  if (status === 403 && workerMode()) return 'GitHub refused the login server\'s token (403): check GITHUB_TOKEN on the worker, or the rate limit is spent.';
+  if (status === 403 && workerMode()) return 'GitHub refused the login server\'s key (403). An admin should check GITHUB_TOKEN on the login server.';
   if (status === 403) return 'GitHub refused (403): the token has no access to the data repo, or the rate limit is spent.';
   if (status === 404) return `Not found on GitHub: ${what}. Check the repo/branch in Settings and that the token can see this private repo.`;
   return `GitHub error ${status} (${what})`;
+}
+/* Why a request failed, in plain words. Through the login server a refusal can come from the server itself
+   ("Players can't change that", "You can only change your own character sheet") or from GitHub. Only GitHub's
+   own refusals (they carry a documentation_url, or the server's "GitHub 403") mention the GitHub key. */
+async function whyFailed(r, what) {
+  let j = null; try { j = await r.clone().json(); } catch (_) { /* not JSON */ }
+  const msg = j && j.message ? String(j.message) : '';
+  const fromGitHub = !!(j && j.documentation_url) || /^GitHub \d+$/.test(msg);
+  if (/rate limit/i.test(msg)) return 'GitHub\'s hourly request limit is used up. Wait a few minutes and try again.';
+  if (/^Players can't change that/i.test(msg)) return 'Only the DMs can change that.';
+  if (workerMode() && msg && !fromGitHub && r.status !== 401) return msg;
+  return explain(r.status, what);
 }
 
 async function readFile(name) {
   const path = FILES[name];
   const r = await gh(repoPath(`contents/${encPath(path)}?ref=${encodeURIComponent(GH.branch)}`));
   if (r.status === 404 && SHA[path] === undefined && headSha) { RAW[name] = defaults(name); SHA[path] = null; return RAW[name]; } // missing file: first save creates it
-  if (!r.ok) fail(r.status, explain(r.status, path));
+  if (!r.ok) fail(r.status, await whyFailed(r, path));
   const j = await r.json();
   SHA[path] = j.sha;
   RAW[name] = JSON.parse(b64decode(j.content));
@@ -119,7 +131,7 @@ async function save(name, mutate, message) {
       return next;
     }
     if (r.status === 409 || r.status === 422) { await readFile(name); continue; }
-    fail(r.status, explain(r.status, path));
+    fail(r.status, await whyFailed(r, path));
   }
   fail(409, 'Could not save: the other DM changed the same thing at the same moment. Try again.');
 }
@@ -134,7 +146,7 @@ async function readSheet(id) {
   const path = sheetPath(id);
   const r = await gh(repoPath(`contents/${encPath(path)}?ref=${encodeURIComponent(GH.branch)}`));
   if (r.status === 404) { SHEETS[id] = {}; SHA[path] = null; return SHEETS[id]; } // no sheet yet: the first save creates it
-  if (!r.ok) fail(r.status, explain(r.status, path));
+  if (!r.ok) fail(r.status, await whyFailed(r, path));
   const j = await r.json();
   SHA[path] = j.sha;
   let v = {}; try { v = JSON.parse(b64decode(j.content || '')); } catch (_) { v = {}; }
@@ -152,8 +164,7 @@ async function saveSheet(id, mutate, message) {
     const r = await gh(repoPath(`contents/${encPath(path)}`), { method: 'PUT', body });
     if (r.ok) { const j = await r.json(); SHA[path] = j.content.sha; advanceHead(j.commit); SHEETS[id] = next; return next; }
     if (r.status === 409 || r.status === 422) { await readSheet(id); continue; } // someone else saved first: re-apply our edits on top of theirs
-    let msg = ''; try { msg = (await r.json()).message || ''; } catch (_) { /* ignore */ }
-    fail(r.status, msg && r.status !== 404 ? msg : explain(r.status, path));
+    fail(r.status, await whyFailed(r, path));
   }
   fail(409, 'Could not save the sheet: it changed at the same moment on another screen. Try again.');
 }
@@ -214,7 +225,7 @@ async function loadAll() {
   if (loaded) return loaded;
   loaded = (async () => {
     const r = await gh(refPath());
-    if (!r.ok) fail(r.status, explain(r.status, `branch ${GH.branch}`));
+    if (!r.ok) fail(r.status, await whyFailed(r, `branch ${GH.branch}`));
     headEtag = r.headers.get('etag');
     headSha = (await r.json()).object.sha;
     // Only fetch files that exist and that this person may read (the login server lists just those for players)
@@ -337,7 +348,7 @@ async function uploadMedia(file, dir = 'media/battle', { maxSide = 4096, message
   const path = `${dir}/${prefix ? prefix + '-' : ''}${prefix ? uid().slice(0, 10) : uid()}.${ext}`;
   const body = { message: message || `${ME.name}: upload ${path}`, content: await blobToBase64(blob), branch: GH.branch, author: { name: ME.name, email: `${ME.id}@goat-crew.local` } };
   const r = await gh(repoPath(`contents/${encPath(path)}`), { method: 'PUT', body });
-  if (!r.ok) { let msg = ''; try { msg = (await r.json()).message || ''; } catch (_) { /* ignore */ } fail(r.status, msg && ![401, 404].includes(r.status) ? msg : explain(r.status, path)); }
+  if (!r.ok) fail(r.status, await whyFailed(r, path));
   advanceHead((await r.json()).commit);
   MEDIA[path] = Promise.resolve(URL.createObjectURL(blob)); // no need to download what we just sent
   return { path, w, h };
